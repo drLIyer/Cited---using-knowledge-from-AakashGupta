@@ -18,14 +18,41 @@
   // ── State ──────────────────────────────────────────────────────────────────
   const store = {
     get(key, fallback) { try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; } catch { return fallback; } },
-    set(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* private mode: keep in memory */ } },
+    // Returns false when the browser refuses (storage full, or blocked in private mode).
+    set(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); return true; } catch { return false; } },
+    bytes() { try { let n = 0; for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); n += (k.length + (localStorage.getItem(k) || "").length) * 2; } return n; } catch { return 0; } },
   };
+  // Anonymous ids for usage counts (no names, emails or cookies). See cited/analytics.py.
+  const rid = () => (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2) + Date.now().toString(36)).replace(/[^A-Za-z0-9_-]/g, "");
+  const visitorId = store.get("cited.visitor", null) || rid();
+  store.set("cited.visitor", visitorId);
+  let sessionId; try { sessionId = sessionStorage.getItem("cited.session") || rid(); sessionStorage.setItem("cited.session", sessionId); } catch { sessionId = rid(); }
+  function track(type, fields = {}) {
+    try {
+      fetch("/api/event", { method: "POST", keepalive: true, headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type, visitor_id: visitorId, session_id: sessionId, ...fields }) }).catch(() => {});
+    } catch { /* analytics must never break the app */ }
+  }
   let notebooks = store.get("cited.notebooks", []);
   let activeId = store.get("cited.active", null);
   let history = [];
   let meta = null;
   let busy = false;
-  const persist = () => { store.set("cited.notebooks", notebooks); store.set("cited.active", activeId); renderNotebooks(); };
+  const STORAGE_BUDGET = 4.5 * 1024 * 1024; // browsers allow ~5 MB per site
+  let storageWarned = false;
+  const persist = () => {
+    const ok = store.set("cited.notebooks", notebooks) && store.set("cited.active", activeId);
+    renderNotebooks();
+    if (!ok) {
+      toast("Couldn't save: this browser's notebook storage is full or blocked. Export your notebook, then remove old items.");
+      return false;
+    }
+    if (!storageWarned && store.bytes() > STORAGE_BUDGET * 0.8) {
+      storageWarned = true;
+      toast("Notebook storage is almost full in this browser. Export to keep a copy.");
+    }
+    return true;
+  };
   const active = () => notebooks.find((n) => n.id === activeId) || null;
   const uid = () => Math.random().toString(36).slice(2, 10);
 
@@ -123,7 +150,7 @@
     try {
       const res = await fetch("/api/ask", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question, history: opts.fresh ? [] : history.slice(-8), fresh: !!opts.fresh }),
+        body: JSON.stringify({ question, history: opts.fresh ? [] : history.slice(-8), fresh: !!opts.fresh, visitor_id: visitorId, session_id: sessionId }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -216,8 +243,8 @@
     const explore = el("div", { class: "card" },
       el("h4", {}, state.mode === "not_covered" ? "Topics Cited does cover" : "Want to explore related topics?"),
       el("div", { class: "chips" },
-        rel.questions.map((q) => el("button", { class: "chip", onclick: () => ask(q) }, q)),
-        rel.topics.map((t) => el("button", { class: "chip chip--topic", onclick: () => openTopic(t.id) }, `Topic: ${t.name}`))));
+        rel.questions.map((q) => el("button", { class: "chip", onclick: () => { track("related_click", { kind: "question" }); ask(q); } }, q)),
+        rel.topics.map((t) => el("button", { class: "chip chip--topic", onclick: () => { track("related_click", { kind: "topic", topic: t.id }); openTopic(t.id); } }, `Topic: ${t.name}`))));
     if (state.more.length) {
       explore.append(el("h4", { style: "margin-top:12px" }, "More on this in the archive"),
         el("ul", { class: "more-list" }, state.more.slice(0, 4).map((m) =>
@@ -247,6 +274,7 @@
     const view = $("#topicView");
     $("#hero").hidden = true; $("#thread").hidden = true; view.hidden = false;
     view.replaceChildren(el("p", { class: "tag" }, el("span", { class: "spinner" }), "Loading topic…"));
+    track("topic_open", { topic: id });
     window.scrollTo({ top: 0 });
     const t = await fetch(`/api/topics/${encodeURIComponent(id)}`).then((r) => r.json());
     const points = (t.perspectives || []).map((p) => p.claim);
@@ -257,6 +285,7 @@
         sources: (t.passages || []).slice(0, 6).map(slimSource), saved_at: new Date().toISOString(),
       });
       persist(); openDrawer(); toast(`Started notebook “${t.name}”`);
+      track("save", { kind: "topic", topic: id });
     };
     view.replaceChildren(
       el("button", { class: "link-btn", onclick: backToChat }, "← Back"),
@@ -290,6 +319,7 @@
   function createNotebook(title) {
     const nb = { id: uid(), title: title || "My notebook", created: new Date().toISOString(), entries: [] };
     notebooks.unshift(nb); activeId = nb.id; persist();
+    track("notebook_created");
     return nb;
   }
 
@@ -300,7 +330,10 @@
   function saveEntry(entry, _topicId, notebookTitle) {
     const nb = notebookTitle ? findOrCreate(notebookTitle) : (active() || createNotebook("My notebook"));
     nb.entries.push({ ...entry, saved_at: new Date().toISOString() });
-    activeId = nb.id; persist(); renderDrawer();
+    activeId = nb.id;
+    if (!persist()) { nb.entries.pop(); renderDrawer(); return; }
+    renderDrawer();
+    track("save", { kind: entry.kind });
     toast(`Saved to “${nb.title}”`);
   }
 
@@ -342,7 +375,9 @@
       return;
     }
     $("#nbTitle").value = nb.title;
-    $("#nbMeta").textContent = `${nb.entries.length} saved · started ${nb.created.slice(0, 10)}`;
+    const used = store.bytes();
+    $("#nbMeta").textContent = `${nb.entries.length} saved · started ${nb.created.slice(0, 10)}` +
+      (used > STORAGE_BUDGET * 0.5 ? ` · browser storage ${Math.round((used / STORAGE_BUDGET) * 100)}% full` : "");
     if (!nb.entries.length) {
       entries.replaceChildren(el("div", { class: "drawer__empty" }, "Empty for now. Save answers, quotes or topics here."));
       return;
@@ -371,6 +406,7 @@
 
   async function download(kind, nb) {
     if (!nb || !nb.entries?.length) return toast("Nothing to export yet");
+    track("export", { kind: kind === "pdf" ? "pdf" : "markdown" });
     toast(kind === "pdf" ? "Preparing PDF…" : "Preparing Markdown…");
     const res = await fetch(`/api/export/${kind}`, {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -396,6 +432,7 @@
   // ── Boot ───────────────────────────────────────────────────────────────────
   async function init() {
     renderNotebooks();
+    track("visit");
     try {
       meta = await fetch("/api/meta").then((r) => r.json());
       $("#statPods").textContent = meta.podcasts;

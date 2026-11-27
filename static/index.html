@@ -8,6 +8,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,500;8..60,600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/style.css">
+  <link rel="icon" type="image/svg+xml" href="/static/logo-mark.svg">
+  <meta name="theme-color" content="#161E38">
 </head>
 <body>
   <div class="credit-bar" role="note">
@@ -18,8 +20,8 @@
   <header class="topbar">
     <button class="icon-btn only-mobile" id="menuBtn" aria-label="Open menu">☰</button>
     <a class="brand" href="/" id="homeLink">
-      <span class="brand__mark">C</span>
-      <span class="brand__text"><span class="brand__name">Cited</span><span class="brand__sub">knowledge from Aakash Gupta</span></span>
+      <img class="brand__mark" src="/static/logo-mark.svg" alt="" width="36" height="36">
+      <span class="brand__text"><span class="brand__name">Cited</span><span class="brand__sub">Built with The Growth Podcast &amp; free newsletters</span></span>
     </a>
     <nav class="topbar__nav">
       <button class="pill-btn" id="topicsBtn">Topics</button>
@@ -50,8 +52,9 @@
         <div class="steps">
           <div class="step"><span>1</span>Ask anything about product, growth, AI or PM careers</div>
           <div class="step"><span>2</span>Explore related topics across episodes and posts</div>
-          <div class="step"><span>3</span>Save to a notebook · export as Markdown or PDF</div>
+          <div class="step"><span>3</span>Save to a notebook · download as Markdown or PDF</div>
         </div>
+        <p class="hero__note">No sign-up. Chats aren't saved after you leave; notebooks stay in this browser until you download them.</p>
         <div class="starters" id="starters">
           <button class="chip">How should I price a new AI feature?</button>
           <button class="chip">What makes a good North Star metric?</button>
@@ -75,7 +78,7 @@
         <button class="btn" id="exportMd">Export Markdown</button>
         <button class="btn btn--primary" id="exportPdf">Export PDF</button>
       </div>
-      <p class="drawer__hint">Notebooks are saved in this browser. Export to keep a copy in Google Drive, Notion or your files.</p>
+      <p class="drawer__hint"><strong>No account needed.</strong> Notebooks stay in this browser only: they won't appear on other devices, and clearing browser data deletes them. Export to keep a copy in Google Drive, Notion or your files.</p>
     </aside>
   </div>
 

@@ -47,6 +47,7 @@ MAX_PER_DOC = int(os.getenv("CITED_MAX_PER_DOC", "2"))   # diversity cap
 # Saved-answer reuse: BOTH conditions must hold (see cited/cache.py).
 CACHE_QUESTION_SIM = float(os.getenv("CITED_CACHE_QUESTION_SIM", "0.92"))
 CACHE_SOURCE_OVERLAP = float(os.getenv("CITED_CACHE_SOURCE_OVERLAP", "0.5"))
+CACHE_MAX_LIVE = int(os.getenv("CITED_CACHE_MAX_LIVE", "5000"))  # ~15 MB at most
 
 # Abuse / cost protection for the free tier.
 RATE_LIMIT_PER_HOUR = int(os.getenv("CITED_RATE_LIMIT_PER_HOUR", "20"))

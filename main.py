@@ -6,8 +6,10 @@ Runs in search-only mode until ANTHROPIC_API_KEY is set.
 """
 from __future__ import annotations
 
+import hmac
 import json
 import logging
+import os
 import time
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
@@ -17,7 +19,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from cited import answer, config, export, models, search
+from cited import analytics, answer, config, export, models, search
 from cited.cache import AnswerCache, seed_from_generated
 from cited.index import Index
 from cited.topics import TOPIC_BY_ID, TOPICS
@@ -36,7 +38,9 @@ async def lifespan(_app: FastAPI):
     seeded = seed_from_generated(cache, idx.generated)
     models.embed_queries(["warm up"])
     models.rerank("warm up", ["warm up"])
-    STATE.update(index=idx, cache=cache)
+    stats = analytics.Analytics(analytics.default_path())
+    stats.purge_questions()
+    STATE.update(index=idx, cache=cache, analytics=stats)
     log.info("Ready: %s passages, %d saved answers (%d pre-generated), answers %s",
              idx.meta["passages"], len(cache.entries), seeded,
              "ON" if answer.llm_enabled() else "OFF (search-only)")
@@ -142,6 +146,8 @@ class AskRequest(BaseModel):
     question: str = Field(min_length=1, max_length=1000)
     history: list[dict] = Field(default_factory=list)
     fresh: bool = False  # skip saved answers ("answer my exact question")
+    visitor_id: str | None = None  # anonymous ids made in the browser (see cited/analytics.py)
+    session_id: str | None = None
 
 
 def _sse(event: dict) -> str:
@@ -169,6 +175,14 @@ async def ask(req: AskRequest, request: Request):
     else:
         related = search.related(idx, results, question, found["question_topics"])
 
+    def log_ask(mode: str) -> None:
+        low = found["confidence"]["level"] == "low"
+        topics = [] if low else found["question_topics"]
+        STATE["analytics"].log(
+            "ask", req.visitor_id, req.session_id, topic=topics[0] if topics else None, kind=mode,
+            turn=1 + sum(1 for h in req.history if h.get("role") == "user"),
+            confidence=found["confidence"]["level"], question=question)
+
     async def events():
         yield _sse({"type": "sources", "sources": results, "confidence": found["confidence"],
                     "more": found["more"]})
@@ -176,6 +190,9 @@ async def ask(req: AskRequest, request: Request):
         if not req.fresh and not req.history:
             q_vec = models.embed_queries([question])[0]
             hit = cache.lookup(q_vec, [r["chunk_id"] for r in results])
+        low = not results or found["confidence"]["level"] == "low"
+        log_ask("saved" if hit else "not_covered" if low else
+                "search_only" if not answer.llm_enabled() else "answered")
         if hit:
             srcs = [search.present(idx, c) for c in map(idx.chunk, hit["chunk_ids"]) if c]
             yield _sse({"type": "saved", "question": hit["question"], "origin": hit["origin"],
@@ -231,6 +248,45 @@ def export_pdf(nb: Notebook):
     pdf = export.to_pdf(nb.model_dump())
     return Response(pdf, media_type="application/pdf",
                     headers={"Content-Disposition": f'attachment; filename="{_filename(nb.title, "pdf")}"'})
+
+
+# ── Analytics ─────────────────────────────────────────────────────────────────
+
+class EventIn(BaseModel):
+    type: str = Field(max_length=20)
+    visitor_id: str | None = None
+    session_id: str | None = None
+    topic: str | None = Field(default=None, max_length=40)
+    kind: str | None = Field(default=None, max_length=20)
+    value: str | None = Field(default=None, max_length=40)
+
+
+@app.post("/api/event", status_code=204)
+def track(ev: EventIn):
+    if ev.type in analytics.CLIENT_EVENTS:
+        topic = ev.topic if (ev.topic is None or ev.topic in TOPIC_BY_ID) else None
+        STATE["analytics"].log(ev.type, ev.visitor_id, ev.session_id, topic=topic, kind=ev.kind, value=ev.value)
+    return Response(status_code=204)
+
+
+def _require_admin(request: Request) -> None:
+    token = os.getenv("CITED_ADMIN_TOKEN", "")
+    given = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+    if not token:
+        raise HTTPException(404, "admin dashboard is off: set CITED_ADMIN_TOKEN")
+    if not hmac.compare_digest(given.encode(), token.encode()):
+        raise HTTPException(401, "wrong admin token")
+
+
+@app.get("/admin")
+def admin_page():
+    return FileResponse(config.ROOT / "static" / "admin.html")
+
+
+@app.get("/api/admin/metrics")
+def admin_metrics(request: Request, days: int = 30):
+    _require_admin(request)
+    return STATE["analytics"].metrics(days=min(max(days, 7), 365))
 
 
 @app.get("/healthz")

@@ -29,6 +29,16 @@ Turn on written answers:
 ANTHROPIC_API_KEY=... uvicorn main:app --port 8080
 ```
 
+## Usage dashboard
+
+Set `CITED_ADMIN_TOKEN` and open `/admin`. It shows daily, weekly and monthly active visitors, stickiness, 7-day return, **weekly savers** (visitors who saved anything: the main number), questions per session and the one-and-done rate, notebooks created, saves and exports, the topics people ask about, and how many questions the archive couldn't cover.
+
+Tracking is anonymous: a random browser id and a random per-visit session id, no names, emails, IP addresses or cookies. Visitors are browsers, so one person on two devices counts twice. Question text is stored only with `CITED_LOG_QUESTIONS=1` (then mention it in your privacy note), and is erased after 30 days. Events are kept 400 days. Data lives in `data/analytics.sqlite3`; on Railway or Render point `CITED_ANALYTICS_DB` at a persistent volume.
+
+## No sign-in (by design, for the free MVP)
+
+Chats aren't kept after the tab closes, and nothing carries over between visits. Notebooks live in the visitor's own browser (about 500 saved items fit) and don't sync across devices; Markdown or PDF export is how people keep them. If browser storage fills up, the app says so instead of failing silently.
+
 ## Pre-generated content
 
 Summaries, takeaways, topic pages, related questions and a Q&A bank are generated once and stored in `generated/`. See **[pregen/README.md](pregen/README.md)**: run it with Claude Code on your own machine (uses your Claude plan) or with the Batch API.
@@ -53,7 +63,8 @@ python evals/run_evals.py                # retrieval, confidence, links, latency
 | `cited/cache.py` | Saved-answer reuse rules |
 | `cited/pregen.py`, `cited/generated.py` | One-time generation and validation |
 | `cited/export.py` | Markdown and PDF export |
-| `main.py`, `static/` | FastAPI app and the web UI |
+| `cited/analytics.py`, `static/admin.html` | Anonymous usage events and the admin dashboard |
+| `main.py`, `static/` | FastAPI app and the web UI (logo from the Cited repo: `static/logo.svg`, `static/logo-mark.svg`) |
 | `index_seed/` | Saved passage vectors (no text) so deploys skip re-embedding |
 
 ## Configuration
@@ -64,6 +75,9 @@ python evals/run_evals.py                # retrieval, confidence, links, latency
 | `CITED_ANSWER_MODEL` | `claude-haiku-5-5` | Model for live answers |
 | `CITED_PREGEN_MODEL` | `claude-opus-5-5` | Model for pre-generation (Batch API path) |
 | `CITED_RATE_LIMIT_PER_HOUR` | `20` | Questions per IP per hour |
+| `CITED_ADMIN_TOKEN` | (unset) | Turns on `/admin`; the token to open it |
+| `CITED_ANALYTICS_DB` | `./data/analytics.sqlite3` | Where usage events are stored |
+| `CITED_LOG_QUESTIONS` | `0` | `1` stores question text (30 days) to list uncovered questions |
 | `CITED_DATA_DIR` / `CITED_INDEX_DIR` | `./data` / `./index` | Raw sources / built index (both git-ignored) |
 
 PDF export bundles the DejaVu Sans font (free license, see dejavu-fonts.github.io).

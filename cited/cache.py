@@ -46,7 +46,8 @@ class AnswerCache:
     def _save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(json.dumps({"version": self.version, "entries": self.entries}))
+        live = [e for e in self.entries if e["origin"] == "live"]  # pre-generated ones reload from generated/
+        tmp.write_text(json.dumps({"version": self.version, "entries": live}))
         tmp.replace(self.path)
 
     def add(self, question: str, answer: str, chunk_ids: list[str], origin: str,
@@ -57,6 +58,13 @@ class AnswerCache:
             self.entries.append({"question": question, "answer": answer, "chunk_ids": chunk_ids,
                                  "origin": origin, "created": time.time(), "vec": vec.tolist()})
             self.vecs = np.vstack([self.vecs, vec[None, :].astype(np.float32)])
+            # Cap growth: drop the oldest live answers (pre-generated ones are kept).
+            live = [i for i, e in enumerate(self.entries) if e["origin"] == "live"]
+            if len(live) > config.CACHE_MAX_LIVE:
+                drop = set(live[: len(live) - config.CACHE_MAX_LIVE])
+                keep = [i for i in range(len(self.entries)) if i not in drop]
+                self.entries = [self.entries[i] for i in keep]
+                self.vecs = self.vecs[keep]
             if persist:
                 self._save()
 
