@@ -36,13 +36,13 @@
     {"q": "How do you go from PM to product builder?", "cat": "specific", "expect": ["pod:2026-10-08-pm-to-product-builder-roadmap"]},
     {"q": "How do VPs of product use Claude without producing slop?", "cat": "specific", "expect": ["pod:2026-06-09-claude-vp"]},
 
-    {"q": "How should a PM deal with tech debt?", "cat": "newsletter", "expect": ["news:tech-debt"]},
-    {"q": "What did Netflix learn about experimentation?", "cat": "newsletter", "expect": ["news:-netflix-lessons-in-experimentation"]},
+    {"q": "How should a PM deal with tech debt?", "cat": "newsletter", "expect": ["news:tech-debt", "news:how-do-you-deal-with-tech-debt-as"]},
+    {"q": "What did Netflix learn about experimentation?", "cat": "newsletter", "expect": ["news:-netflix-lessons-in-experimentation", "news:netflix-experimentation"]},
     {"q": "How did Miro grow?", "cat": "newsletter", "expect": ["news:how-miro-grows-tactical-lessons-from"]},
-    {"q": "How did Nubank build a neobank?", "cat": "newsletter", "expect": ["news:nubank-story"]},
-    {"q": "Why do writing cultures fail?", "cat": "newsletter", "expect": ["news:-how-writing-cultures-fail"]},
+    {"q": "How did Nubank build a neobank?", "cat": "newsletter", "expect": ["news:nubank-story", "news:how-to-build-a-neobank-the-nubank"]},
+    {"q": "Why do writing cultures fail?", "cat": "newsletter", "expect": ["news:-how-writing-cultures-fail", "news:how-writing-cultures-fail"]},
     {"q": "How did Spotify win podcasts from Apple?", "cat": "newsletter", "expect": ["news:spotify-podcasts-apple"]},
-    {"q": "What is the history of product management?", "cat": "newsletter", "expect": ["news:-the-history-of-product-management"]},
+    {"q": "What is the history of product management?", "cat": "newsletter", "expect": ["news:-the-history-of-product-management", "news:history-of-pm"]},
     {"q": "Why did Rocket Companies acquire Truebill?", "cat": "newsletter", "expect": ["news:rocket-plus-truebill"]},
     {"q": "How should a PM adjust to their situation?", "cat": "newsletter", "expect": ["news:adjust-situation-pm"]},
 

@@ -265,9 +265,29 @@ def fetch_newsletter_posts(cache_path: Path | None = None, refresh: bool = False
     return slim
 
 
+def _title_key(title: str) -> str:
+    import unicodedata
+    t = unicodedata.normalize("NFKD", html.unescape(title or "")).lower()
+    return re.sub(r"[^a-z0-9]+", " ", t).strip()
+
+
+def dedupe_posts(posts: list[dict], min_date: str = config.NEWSLETTER_MIN_DATE) -> list[dict]:
+    """Drop cross-posted duplicates (same title, different slug; keep the
+    longer copy) and posts older than min_date (early personal posts)."""
+    best: dict[str, dict] = {}
+    for p in posts:
+        if (p.get("post_date") or "")[:10] < min_date:
+            continue
+        key = _title_key(p.get("title", "")) or str(p["id"])
+        cur = best.get(key)
+        if cur is None or len(p.get("body_html") or "") > len(cur.get("body_html") or ""):
+            best[key] = p
+    return list(best.values())
+
+
 def newsletter_docs(posts: list[dict]) -> list[dict]:
     docs = []
-    for p in posts:
+    for p in dedupe_posts(posts):
         units = html_to_units(p.get("body_html") or "")
         if not units:
             continue

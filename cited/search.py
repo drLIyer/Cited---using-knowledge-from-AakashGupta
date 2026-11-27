@@ -13,7 +13,7 @@ import numpy as np
 
 from . import config, links, models
 from .index import Index, tokenize
-from .topics import TOPIC_BY_ID
+from .topics import STARTERS, TOPIC_BY_ID
 
 # Provisional confidence thresholds on sigmoid(reranker score).
 HIGH = 0.80
@@ -47,10 +47,10 @@ def confidence(results: list[dict]) -> dict:
         return {"level": "low", "score": 0.0, "label": "Not covered in the free archive", "sources": 0}
     top = results[0]["relevance"]
     supporting = len({r["doc_id"] for r in results if r["relevance"] >= SUPPORT})
-    if top >= HIGH and supporting >= 2:
-        level, label = "high", f"Well covered: {supporting} sources"
+    if top >= HIGH:
+        level, label = "high", "Well covered"
     elif top >= MEDIUM:
-        level, label = "medium", "Partly covered" if supporting < 2 else f"Covered by {supporting} sources"
+        level, label = "medium", "Partly covered"
     else:
         level, label = "low", "Not well covered in the free archive"
     return {"level": level, "score": round(top, 3), "label": label, "sources": supporting}
@@ -71,6 +71,7 @@ def present(idx: Index, chunk: dict, relevance: float | None = None) -> dict:
         "text": chunk["text"],
         "topics": chunk.get("topics", []),
         "url": links.source_link(chunk, d),
+        "has_video": bool(d.get("youtube_url")),
         "page_url": d.get("url", ""),
     }
     if relevance is not None:
@@ -87,7 +88,7 @@ def search(idx: Index, query: str, top_k: int | None = None, kind: str | None = 
                             for c in idx.chunks])
     q_vec = models.embed_queries([query])[0]
     pool = _candidates(idx, query, q_vec, allowed)
-    texts = [f"{idx.docs[idx.chunks[i]['doc_id']]['title']}. {idx.chunks[i]['text']}" for i in pool]
+    texts = [idx.context_text(idx.chunks[i]) for i in pool]
     scores = models.rerank(query, texts)
     ranked = sorted(zip(pool, scores), key=lambda x: -x[1])
 
@@ -100,20 +101,24 @@ def search(idx: Index, query: str, top_k: int | None = None, kind: str | None = 
             results.append(present(idx, c, rel))
         elif c["doc_id"] not in per_doc and rel >= MORE_MIN and all(m["doc_id"] != c["doc_id"] for m in more):
             more.append(present(idx, c, rel))
-    return {"results": results, "more": more[:6], "confidence": confidence(results)}
+    return {"results": results, "more": more[:6], "confidence": confidence(results),
+            "question_topics": idx.question_topics(q_vec, [r["topics"] for r in results])}
 
 
-def related(idx: Index, results: list[dict], asked: str = "", limit: int = 4) -> dict:
+def related(idx: Index, results: list[dict], asked: str = "", question_topics: list[str] | None = None,
+            limit: int = 4) -> dict:
     """Suggested next steps: related topics and questions.
 
-    Prefers pre-generated related questions; falls back to questions each
-    source is known to answer; then to simple topic prompts.
+    Topics come from the question itself when it clearly points at some (more
+    reliable than provisional passage tags), topped up from the results' tags.
+    Questions prefer pre-generated related questions, then questions each
+    source is known to answer, then hand-written starters for the topics.
     """
     weights: Counter = Counter()
     for r in results:
         for t in r.get("topics", []):
             weights[t] += r.get("relevance", 0.5)
-    topic_ids = [t for t, _ in weights.most_common(3)]
+    topic_ids = list(dict.fromkeys((question_topics or []) + [t for t, _ in weights.most_common(3)]))[:3]
     topics = [{"id": t, "name": TOPIC_BY_ID[t]["name"]} for t in topic_ids if t in TOPIC_BY_ID]
 
     questions: list[str] = []
@@ -123,13 +128,8 @@ def related(idx: Index, results: list[dict], asked: str = "", limit: int = 4) ->
     for r in results:
         questions += gen.get("docs", {}).get(r["doc_id"], {}).get("questions_answered", [])[:1]
     if not questions:
-        questions = [f"What do guests disagree about in {TOPIC_BY_ID[t]['name'].lower()}?" for t in topic_ids]
-        seen_speakers = []
-        for r in results:
-            for s in r["speakers"]:
-                if s not in ("Aakash Gupta", "Unidentified speaker") and s not in seen_speakers:
-                    seen_speakers.append(s)
-        questions += [f"What else does {s} recommend?" for s in seen_speakers[:2]]
+        for t in topic_ids:
+            questions += STARTERS.get(t, [])
     asked_l = asked.strip().lower()
     deduped = list(dict.fromkeys(q for q in questions if q.strip().lower() != asked_l))
     return {"topics": topics, "questions": deduped[:limit]}

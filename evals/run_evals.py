@@ -57,7 +57,7 @@ def main() -> None:
         if item.get("topic"):
             row["topic_match"] = sum(item["topic"] in r["topics"] for r in res) / max(1, len(res))
         row["links_ok"] = all(r["url"] for r in res) and all(
-            "t=" in r["url"] for r in res if r["kind"] == "podcast" and r["timestamp"] not in ("", "0:00"))
+            "t=" in r["url"] for r in res if r["kind"] == "podcast" and r["has_video"] and r["timestamp"] not in ("", "0:00"))
         rows.append(row)
 
     by_cat = defaultdict(list)

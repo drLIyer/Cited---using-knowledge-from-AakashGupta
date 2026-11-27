@@ -26,6 +26,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 log = logging.getLogger("cited")
 
 STATE: dict = {}
+DEFAULT_TOPICS = ["ai-pm-skills", "pricing", "careers"]
 
 
 @asynccontextmanager
@@ -97,7 +98,7 @@ def api_search(q: str, kind: str | None = None, topic: str | None = None, k: int
         raise HTTPException(400, "empty query")
     idx: Index = STATE["index"]
     out = search.search(idx, q[:500], top_k=min(max(k, 1), 20), kind=kind, topic=topic)
-    out["related"] = search.related(idx, out["results"], q)
+    out["related"] = search.related(idx, out["results"], q, out["question_topics"])
     return out
 
 
@@ -111,7 +112,7 @@ def topic_page(topic_id: str):
     res = search.search(idx, f"{t['name']}. {t['description']}", top_k=10, topic=topic_id)
     body = {"id": topic_id, "name": t["name"], "description": t["description"],
             "pregenerated": page is not None, "passages": res["results"],
-            "related": search.related(idx, res["results"])}
+            "related": search.related(idx, res["results"], question_topics=[topic_id])}
     if page:
         def src(cid):
             c = idx.chunk(cid)
@@ -162,7 +163,11 @@ async def ask(req: AskRequest, request: Request):
 
     found = search.search(idx, retrieval_q)
     results = found["results"]
-    related = search.related(idx, results, question)
+    if found["confidence"]["level"] == "low":
+        # Don't build suggestions from weak matches; offer the question's own topics or popular ones.
+        related = search.related(idx, [], question, DEFAULT_TOPICS)
+    else:
+        related = search.related(idx, results, question, found["question_topics"])
 
     async def events():
         yield _sse({"type": "sources", "sources": results, "confidence": found["confidence"],
@@ -175,12 +180,12 @@ async def ask(req: AskRequest, request: Request):
             srcs = [search.present(idx, c) for c in map(idx.chunk, hit["chunk_ids"]) if c]
             yield _sse({"type": "saved", "question": hit["question"], "origin": hit["origin"],
                         "answer": hit["answer"], "sources": srcs})
-        elif not answer.llm_enabled():
-            yield _sse({"type": "search_only"})
         elif not results or found["confidence"]["level"] == "low":
             yield _sse({"type": "not_covered",
-                        "message": "The free podcast and newsletter archive doesn't cover this well, so "
-                                   "Cited won't guess. Try one of the related topics below."})
+                        "message": "The free podcast and newsletter archive doesn't cover this, so "
+                                   "Cited won't guess. Try one of the topics below."})
+        elif not answer.llm_enabled():
+            yield _sse({"type": "search_only"})
         else:
             final = None
             async for ev in answer.stream_answer(question, req.history, results):

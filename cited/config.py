@@ -19,6 +19,8 @@ TRANSCRIPTS_REPO = os.getenv(
     "CITED_TRANSCRIPTS_REPO", "https://github.com/aakashg/growth-podcast-transcripts.git"
 )
 NEWSLETTER_BASE = os.getenv("CITED_NEWSLETTER_BASE", "https://www.news.aakashg.com")
+# Posts before this date are early personal posts (travel, cooking, film), not PM content.
+NEWSLETTER_MIN_DATE = os.getenv("CITED_NEWSLETTER_MIN_DATE", "2019-01-01")
 
 # Credit line the transcript license asks for, shown wherever quotes appear.
 CREDIT_NAME = "The Growth Podcast with Aakash Gupta"

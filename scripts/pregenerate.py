@@ -67,7 +67,11 @@ def main() -> None:
     if args.cmd in ("estimate", "export", "submit"):
         items = pregen.work_items(idx, args.pass_, args.only)
         if args.limit:
-            items = items[: args.limit]
+            # Trial runs: alternate podcasts and newsletter posts so both get tested.
+            pods = [i for i in items if i["item_id"].startswith("pod:")]
+            news = [i for i in items if not i["item_id"].startswith("pod:")]
+            mixed = [x for pair in zip(pods, news) for x in pair] + pods[len(news):] + news[len(pods):]
+            items = mixed[: args.limit]
         est = pregen.estimate(items, args.model, batch=True)
         if args.cmd == "estimate":
             print(json.dumps(est, indent=2))

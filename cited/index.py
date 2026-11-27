@@ -30,12 +30,17 @@ when which who will with you your yeah um uh like just kind sort really know thi
 _TOKEN = re.compile(r"[a-z0-9][a-z0-9'+#.-]*")
 
 # Provisional topic tagging by meaning similarity (replaced by the pre-generation pass).
-TOPIC_MIN_SIM = 0.52
-TOPIC_MARGIN = 0.025
+TOPIC_MIN_Z = 1.3
+TOPIC_Z_MARGIN = 0.3
 
 
 def tokenize(text: str) -> list[str]:
     return [t.strip(".'-") for t in _TOKEN.findall(text.lower()) if t not in _STOP and len(t) > 1]
+
+
+def _doc_header(doc: dict) -> str:
+    guests = ", ".join(g for g in doc.get("guests") or [] if g and g.lower() != "guest")
+    return f"{doc['title']}" + (f" (with {guests})" if guests else "")
 
 
 def _doc_meta(doc: dict) -> dict:
@@ -43,20 +48,53 @@ def _doc_meta(doc: dict) -> dict:
 
 
 def tag_topics(emb: np.ndarray) -> list[list[str]]:
+    """Provisional tags: score each topic relative to its own average.
+
+    Raw similarity favors topics with broad descriptions (one topic took half
+    the archive), so each topic's scores are standardized across all passages
+    and a passage is tagged only where it stands out (z >= TOPIC_MIN_Z).
+    """
     topic_vecs = models.embed_passages([f"{t['name']}. {t['description']}" for t in TOPICS])
     sims = emb @ topic_vecs.T
+    z = (sims - sims.mean(axis=0)) / (sims.std(axis=0) + 1e-6)
     tags = []
-    for row in sims:
+    for row in z:
         order = np.argsort(-row)
-        best = row[order[0]]
-        if best < TOPIC_MIN_SIM:
+        if row[order[0]] < TOPIC_MIN_Z:
             tags.append([])
             continue
         picked = [TOPICS[order[0]]["id"]]
-        if row[order[1]] >= max(TOPIC_MIN_SIM, best - TOPIC_MARGIN):
+        if row[order[1]] >= max(TOPIC_MIN_Z, row[order[0]] - TOPIC_Z_MARGIN):
             picked.append(TOPICS[order[1]]["id"])
         tags.append(picked)
     return tags
+
+
+def retag(index_dir: Path | None = None) -> dict:
+    """Recompute provisional topic tags on an existing index (no re-embedding)."""
+    index_dir = index_dir or config.INDEX_DIR
+    chunks = [json.loads(line) for line in (index_dir / "chunks.jsonl").open()]
+    emb = np.load(index_dir / "embeddings.npy")
+    for c, tags in zip(chunks, tag_topics(emb)):
+        c["topics"] = tags
+        c["topics_source"] = "similarity"
+    with (index_dir / "chunks.jsonl").open("w") as f:
+        for c in chunks:
+            f.write(json.dumps(c) + "\n")
+    from collections import Counter
+    return dict(Counter(t for c in chunks for t in c["topics"]))
+
+
+def write_seed(index_dir: Path | None = None) -> int:
+    """Save the current index's vectors as the reusable embedding seed."""
+    index_dir = index_dir or config.INDEX_DIR
+    docs = {d["id"]: d for d in json.loads((index_dir / "docs.json").read_text())}
+    chunks = [json.loads(line) for line in (index_dir / "chunks.jsonl").open()]
+    emb = np.load(index_dir / "embeddings.npy")
+    keys = [_text_key(f"{docs[c['doc_id']]['title']}\n{c['text']}") for c in chunks]
+    SEED_PATH.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(SEED_PATH, keys=np.array(keys), vecs=emb.astype(np.float16))
+    return len(keys)
 
 
 SEED_PATH = config.ROOT / "index_seed" / "embeddings.npz"
@@ -141,6 +179,9 @@ class Index:
     bm25: BM25Okapi = field(repr=False)
     pos: dict[str, int] = field(repr=False)
     generated: dict = field(default_factory=dict, repr=False)
+    topic_vecs: np.ndarray | None = field(default=None, repr=False)
+    topic_mu: np.ndarray | None = field(default=None, repr=False)
+    topic_sd: np.ndarray | None = field(default=None, repr=False)
 
     @classmethod
     def load(cls, index_dir: Path | None = None, generated_dir: Path | None = None) -> "Index":
@@ -149,12 +190,43 @@ class Index:
         chunks = [json.loads(line) for line in (index_dir / "chunks.jsonl").open()]
         emb = np.load(index_dir / "embeddings.npy")
         meta = json.loads((index_dir / "meta.json").read_text())
-        bm25 = BM25Okapi([tokenize(f"{docs[c['doc_id']]['title']} {c['text']}") for c in chunks])
+        bm25 = BM25Okapi([tokenize(f"{_doc_header(docs[c['doc_id']])} {c['text']}") for c in chunks])
         idx = cls(docs=docs, chunks=chunks, emb=emb, meta=meta, bm25=bm25,
                   pos={c["id"]: i for i, c in enumerate(chunks)})
         from . import generated
         idx.generated = generated.load(generated_dir or config.GENERATED_DIR, idx)
+        idx.topic_vecs = models.embed_passages([f"{t['name']}. {t['description']}" for t in TOPICS])
+        sims = emb @ idx.topic_vecs.T
+        idx.topic_mu, idx.topic_sd = sims.mean(axis=0), sims.std(axis=0) + 1e-6
         return idx
+
+    def question_topics(self, q_vec: np.ndarray, result_tags: list[list[str]] | None = None,
+                        limit: int = 3, min_z: float = 1.0) -> list[str]:
+        """Topics a question is about.
+
+        Combines the question's own topic score (relative z, like passages) with
+        how many of the top passages carry each tag: the question alone can be
+        ambiguous ("price an AI feature" reads as AI evals to a small model).
+        """
+        z = (q_vec @ self.topic_vecs.T - self.topic_mu) / self.topic_sd
+        votes = np.zeros(len(TOPICS))
+        pos = {t["id"]: i for i, t in enumerate(TOPICS)}
+        for tags in result_tags or []:
+            for t in tags:
+                if t in pos:
+                    votes[pos[t]] += 1
+        if votes.sum():
+            votes = votes / votes.sum() * 2.0  # up to +2 for a topic all passages share
+        score = z + votes
+        order = np.argsort(-score)
+        return [TOPICS[i]["id"] for i in order[:limit] if z[i] >= min_z or votes[i] >= 0.5]
+
+    def context_text(self, chunk: dict) -> str:
+        """Passage text with its source title and guests, for keyword search and reranking.
+
+        Guests matter: some transcripts have no speaker names, so a question that
+        names a guest would otherwise never match their words."""
+        return f"{_doc_header(self.docs[chunk['doc_id']])}\n{chunk['text']}"
 
     def chunk(self, chunk_id: str) -> dict | None:
         i = self.pos.get(chunk_id)

@@ -75,7 +75,7 @@
       text,
       el("div", { class: "src__actions" },
         s.url ? el("a", { href: s.url, target: "_blank", rel: "noopener" },
-          s.kind === "podcast" ? `▶ Watch around ${s.timestamp || "the start"}` : "Read this passage →") : null,
+          s.kind === "podcast" ? (s.has_video === false ? "Listen on Substack →" : `▶ Watch around ${s.timestamp || "the start"}`) : "Read this passage →") : null,
         el("button", { onclick: () => text.classList.toggle("open") }, "Show more"),
         el("button", { onclick: () => saveEntry({ kind: "quote", source: slimSource(s) }, s.topics?.[0]) }, "＋ Save quote")));
     return card;
@@ -159,7 +159,7 @@
       switch (ev.type) {
         case "sources":
           state.sources = ev.sources; state.confidence = ev.confidence; state.more = ev.more || [];
-          head.replaceChildren(confPill(ev.confidence), el("span", { class: "tag" }, `${ev.sources.length} passages from ${new Set(ev.sources.map((s) => s.doc_id)).size} sources`));
+          head.replaceChildren(confPill(ev.confidence), el("span", { class: "tag" }, `${ev.sources.length} passages · ${new Set(ev.sources.map((s) => s.doc_id)).size} episodes and posts`));
           srcBox.replaceChildren(
             el("div", { class: "sources-title" }, "Sources"),
             el("div", { class: "sources" }, ev.sources.map((s, i) => sourceCard(s, i + 1))));
@@ -181,10 +181,16 @@
           notices.append(el("div", { class: "notice notice--info" },
             "Preview mode: answer writing is off, so here are the passages that best answer your question. Save any of them to a notebook."));
           break;
-        case "not_covered":
+        case "not_covered": {
           state.mode = "not_covered";
-          notices.append(el("div", { class: "notice notice--warn" }, ev.message));
+          head.replaceChildren(confPill(state.confidence));
+          srcBox.hidden = true;
+          const toggle = el("button", { onclick: () => { srcBox.hidden = !srcBox.hidden; toggle.textContent = srcBox.hidden ? "Show the closest passages anyway" : "Hide them"; } },
+            "Show the closest passages anyway");
+          notices.append(el("div", { class: "notice notice--warn" }, ev.message, " ", toggle));
+          state.more = [];
           break;
+        }
         case "token":
           state.mode = "streaming"; state.text += ev.text; paint();
           break;
@@ -208,7 +214,7 @@
   function renderFollowup(box, state) {
     const rel = state.related || { topics: [], questions: [] };
     const explore = el("div", { class: "card" },
-      el("h4", {}, "Want to explore related topics?"),
+      el("h4", {}, state.mode === "not_covered" ? "Topics Cited does cover" : "Want to explore related topics?"),
       el("div", { class: "chips" },
         rel.questions.map((q) => el("button", { class: "chip", onclick: () => ask(q) }, q)),
         rel.topics.map((t) => el("button", { class: "chip chip--topic", onclick: () => openTopic(t.id) }, `Topic: ${t.name}`))));
@@ -232,7 +238,7 @@
         el("button", { class: "btn", onclick: () => chooseNotebook(entry()) }, "Choose notebook…"),
         el("button", { class: "btn btn--ghost", onclick: () => download("markdown", { title: state.question, entries: [entry()] }) }, "Markdown"),
         el("button", { class: "btn btn--ghost", onclick: () => download("pdf", { title: state.question, entries: [entry()] }) }, "PDF")));
-    box.replaceChildren(explore, save);
+    box.replaceChildren(explore, state.mode === "not_covered" ? null : save);
   }
 
   // ── Topics ─────────────────────────────────────────────────────────────────
@@ -359,9 +365,9 @@
   }
 
   function openDrawer() {
-    $("#drawer").hidden = false; $(".layout").classList.add("with-drawer"); renderDrawer();
+    $("#drawer").hidden = false; $(".layout").classList.add("with-drawer"); document.body.classList.add("drawer-open"); renderDrawer();
   }
-  function closeDrawer() { $("#drawer").hidden = true; $(".layout").classList.remove("with-drawer"); }
+  function closeDrawer() { $("#drawer").hidden = true; $(".layout").classList.remove("with-drawer"); document.body.classList.remove("drawer-open"); }
 
   async function download(kind, nb) {
     if (!nb || !nb.entries?.length) return toast("Nothing to export yet");
@@ -421,6 +427,7 @@
     $("#exportPdf").addEventListener("click", () => download("pdf", active()));
     $("#homeLink").addEventListener("click", (e) => { e.preventDefault(); backToChat(); if (!$("#thread").children.length) window.scrollTo({ top: 0 }); });
 
+    if (window.matchMedia("(max-width: 760px)").matches) $("#input").placeholder = "Ask a product question…";
     const q = new URLSearchParams(location.search).get("q");
     if (q) ask(q);
   }
