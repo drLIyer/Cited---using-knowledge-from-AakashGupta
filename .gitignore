@@ -1,0 +1,8 @@
+# Raw source material and the search index are rebuilt at deploy time.
+# The transcript license asks us not to re-host the raw files as a dataset.
+data/
+index/
+__pycache__/
+*.pyc
+.env
+.venv/
