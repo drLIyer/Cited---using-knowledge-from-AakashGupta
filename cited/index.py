@@ -59,6 +59,38 @@ def tag_topics(emb: np.ndarray) -> list[list[str]]:
     return tags
 
 
+SEED_PATH = config.ROOT / "index_seed" / "embeddings.npz"
+
+
+def _text_key(text: str) -> str:
+    return hashlib.sha256(f"{config.EMBED_MODEL}\n{text}".encode()).hexdigest()[:20]
+
+
+def _embed_with_seed(texts: list[str]) -> np.ndarray:
+    """Embed passages, reusing vectors saved in index_seed/ for unchanged text.
+
+    The seed holds only text fingerprints and vectors (no transcript text), so it
+    can live in the repo and spare every deploy a long embedding run.
+    """
+    keys = [_text_key(t) for t in texts]
+    known: dict[str, np.ndarray] = {}
+    if SEED_PATH.exists():
+        seed = np.load(SEED_PATH)
+        known = dict(zip(seed["keys"].tolist(), seed["vecs"].astype(np.float32)))
+    missing = [i for i, k in enumerate(keys) if k not in known]
+    log.info("Embedding %d new passages (%d reused from seed)…", len(missing), len(texts) - len(missing))
+    if missing:
+        fresh = models.embed_passages([texts[i] for i in missing])
+        for i, v in zip(missing, fresh):
+            known[keys[i]] = v
+    emb = np.stack([known[k] for k in keys]).astype(np.float32)
+    emb /= np.linalg.norm(emb, axis=1, keepdims=True)
+    if missing:
+        SEED_PATH.parent.mkdir(parents=True, exist_ok=True)
+        np.savez_compressed(SEED_PATH, keys=np.array(keys), vecs=emb.astype(np.float16))
+    return emb
+
+
 def build(docs: list[dict], out_dir: Path | None = None) -> dict:
     out_dir = out_dir or config.INDEX_DIR
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -68,8 +100,7 @@ def build(docs: list[dict], out_dir: Path | None = None) -> dict:
     by_id = {d["id"]: d for d in docs}
     # The title goes into the embedded text so a passage keeps its context.
     texts = [f"{by_id[c['doc_id']]['title']}\n{c['text']}" for c in chunks]
-    log.info("Embedding %d passages from %d documents…", len(chunks), len(docs))
-    emb = models.embed_passages(texts)
+    emb = _embed_with_seed(texts)
     for c, tags in zip(chunks, tag_topics(emb)):
         c["topics"] = tags
         c["topics_source"] = "similarity"

@@ -6,6 +6,7 @@ no per-query cost.
 from __future__ import annotations
 
 import math
+import os
 import threading
 
 import numpy as np
@@ -41,8 +42,11 @@ def _normalize(m: np.ndarray) -> np.ndarray:
     return (m / norms).astype(np.float32)
 
 
-def embed_passages(texts: list[str], batch_size: int = 64) -> np.ndarray:
-    vecs = list(embedder().passage_embed(texts, batch_size=batch_size))
+def embed_passages(texts: list[str], batch_size: int = 16) -> np.ndarray:
+    # ONNX Runtime tends to use one core per process; for big jobs (building the
+    # index) fan out across processes, which is ~3x faster on a 4-core machine.
+    parallel = (os.cpu_count() or 1) if len(texts) > 500 else None
+    vecs = list(embedder().passage_embed(texts, batch_size=batch_size, parallel=parallel))
     return _normalize(np.array(vecs, dtype=np.float32))
 
 
