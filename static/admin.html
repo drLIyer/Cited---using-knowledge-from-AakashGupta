@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Cited admin</title>
+<link rel="icon" type="image/svg+xml" href="/static/logo-mark.svg">
+<style>
+:root {
+  --bg: #f6f5f2; --surface: #ffffff; --border: #e3e0da; --text: #191919; --muted: #666666;
+  --series: #257de0; --grid: #ececec; --good: #0aac23; --warning: #fbb315; --critical: #dc3c3d;
+  --tip-bg: #191919; --tip-text: #ffffff; color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111111; --surface: #191919; --border: #2e2e2e; --text: #efefef; --muted: #9c9c9c;
+    --series: #338ced; --grid: #2a2a2a; --tip-bg: #efefef; --tip-text: #191919; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111111; --surface: #191919; --border: #2e2e2e; --text: #efefef; --muted: #9c9c9c;
+  --series: #338ced; --grid: #2a2a2a; --tip-bg: #efefef; --tip-text: #191919; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 Inter, system-ui, -apple-system, "Segoe UI", sans-serif; }
+.wrap { max-width: 1200px; margin: 0 auto; padding: 20px 16px 60px; }
+header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+h1 { font-size: 20px; margin: 0; }
+h2 { font-size: 14px; margin: 0 0 4px; }
+.sub { color: var(--muted); font-size: 12.5px; margin: 0 0 12px; }
+.controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+select, input, button { font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; min-height: 36px; }
+button { cursor: pointer; }
+.grid { display: grid; gap: 12px; }
+.kpis { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); margin-bottom: 12px; }
+.panels { grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; min-width: 0; }
+.card.wide { grid-column: 1 / -1; }
+.kpi .label { color: var(--muted); font-size: 12.5px; }
+.kpi .value { font-size: 28px; font-weight: 650; letter-spacing: -.01em; font-variant-numeric: tabular-nums; }
+.kpi .hint { color: var(--muted); font-size: 12px; }
+.kpi.main { border-color: var(--series); }
+.chart { position: relative; }
+.chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.axis text { fill: var(--muted); font-size: 11px; }
+.gridline { stroke: var(--grid); }
+.bar { fill: var(--series); }
+.hit { fill: transparent; }
+.hit:hover + .bar, .bar.hover { opacity: .8; }
+.tip { position: absolute; pointer-events: none; background: var(--tip-bg); color: var(--tip-text); font-size: 12px; padding: 6px 8px; border-radius: 6px; white-space: nowrap; transform: translate(-50%, -110%); }
+.hbars { display: grid; gap: 6px; }
+.hrow { display: grid; grid-template-columns: minmax(110px, 38%) 1fr 56px; gap: 8px; align-items: center; font-size: 13px; }
+.hrow .track { display: block; height: 14px; background: var(--grid); border-radius: 4px; overflow: hidden; }
+.hrow .fill { display: block; height: 100%; background: var(--series); border-radius: 0 4px 4px 0; }
+.hrow .num { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
+.status { display: inline-flex; align-items: center; gap: 6px; }
+.dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
+.stat .v { font-size: 20px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.stat .l { color: var(--muted); font-size: 12px; }
+details { margin-top: 8px; font-size: 12.5px; }
+details summary { cursor: pointer; color: var(--muted); }
+table { border-collapse: collapse; width: 100%; margin-top: 6px; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 3px 6px; border-bottom: 1px solid var(--border); }
+.note { color: var(--muted); font-size: 12px; }
+.err { color: var(--critical); }
+.gate { max-width: 420px; margin: 80px auto; }
+.gate form { display: flex; gap: 8px; }
+.gate input { flex: 1; }
+ol.qs { margin: 6px 0 0; padding-left: 20px; font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <section class="gate card" id="gate">
+    <h1>Cited admin</h1>
+    <p class="sub">Enter the admin token (the server's CITED_ADMIN_TOKEN).</p>
+    <form id="gateForm">
+      <label for="token" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">Admin token</label>
+      <input id="token" type="password" autocomplete="current-password" placeholder="Admin token">
+      <button type="submit">Open</button>
+    </form>
+    <p class="err" id="gateErr"></p>
+  </section>
+
+  <div id="dash" hidden>
+    <header>
+      <div style="display:flex;gap:10px;align-items:center">
+        <img src="/static/logo-mark.svg" alt="" width="36" height="36">
+        <div>
+        <h1>Cited usage</h1>
+        <p class="sub" id="asof"></p>
+        </div>
+      </div>
+      <div class="controls">
+        <label for="days" class="note">Range</label>
+        <select id="days"><option value="7">Last 7 days</option><option value="30" selected>Last 30 days</option><option value="90">Last 90 days</option></select>
+        <button id="refresh">Refresh</button>
+        <button id="signout">Sign out</button>
+      </div>
+    </header>
+    <div class="grid kpis" id="kpis"></div>
+    <div class="grid panels">
+      <div class="card wide">
+        <h2>Daily active visitors</h2>
+        <p class="sub">Distinct browsers per day (UTC). Hover a bar for new vs returning.</p>
+        <div class="chart" id="dauChart"></div>
+        <details><summary>Show data table</summary><div id="dauTable"></div></details>
+      </div>
+      <div class="card">
+        <h2>Questions per session</h2>
+        <p class="sub" id="turnsSub"></p>
+        <div class="chart" id="turnsChart"></div>
+      </div>
+      <div class="card">
+        <h2>Notebooks</h2>
+        <p class="sub">Is the notebook idea landing?</p>
+        <div class="stats" id="nbStats"></div>
+      </div>
+      <div class="card">
+        <h2>Topics people ask about</h2>
+        <p class="sub">Main topic of each question (off-topic questions excluded).</p>
+        <div class="hbars" id="topics"></div>
+      </div>
+      <div class="card">
+        <h2>Answer coverage</h2>
+        <p class="sub">How well the free archive covered each question.</p>
+        <div class="hbars" id="coverage"></div>
+        <div id="gaps"></div>
+      </div>
+      <div class="card">
+        <h2>Topic pages opened</h2>
+        <p class="sub">From the sidebar or related-topic chips.</p>
+        <div class="hbars" id="opened"></div>
+      </div>
+    </div>
+    <p class="note" style="margin-top:16px">Visitors are anonymous browser ids: one person on two devices counts twice, and private windows count as new. Read trends, not absolute numbers.</p>
+  </div>
+</div>
+<script>
+(() => {
+  "use strict";
+  const $ = (s) => document.querySelector(s);
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const pct = (x) => (x === null || x === undefined ? "–" : `${Math.round(x * 100)}%`);
+  const num = (x) => (x === null || x === undefined ? "–" : Number(x).toLocaleString());
+  let token = "";
+  try { token = sessionStorage.getItem("cited.admin") || ""; } catch {}
+  const TOPIC_NAMES = {};
+
+  async function load() {
+    const days = $("#days").value;
+    const res = await fetch(`/api/admin/metrics?days=${days}`, { headers: { Authorization: `Bearer ${token}` } });
+    if (res.status === 401 || res.status === 404) {
+      const body = await res.json().catch(() => ({}));
+      $("#dash").hidden = true; $("#gate").hidden = false;
+      $("#gateErr").textContent = body.detail || "Not authorized.";
+      return;
+    }
+    const m = await res.json();
+    $("#gate").hidden = true; $("#dash").hidden = false;
+    render(m);
+  }
+
+  function kpi(label, value, hint, main) {
+    return `<div class="card kpi${main ? " main" : ""}"><div class="label">${esc(label)}</div><div class="value">${value}</div><div class="hint">${esc(hint)}</div></div>`;
+  }
+
+  function hbars(el, rows, opts = {}) {
+    const max = Math.max(1, ...rows.map((r) => r.value));
+    el.innerHTML = rows.length ? rows.map((r) => `
+      <div class="hrow" title="${esc(r.label)}: ${r.value}">
+        <span>${r.prefix || ""}${esc(r.label)}</span>
+        <span class="track"><span class="fill" style="width:${(r.value / max) * 100}%;${r.color ? `background:${r.color}` : ""}"></span></span>
+        <span class="num">${num(r.value)}${opts.total ? ` · ${pct(r.value / opts.total)}` : ""}</span>
+      </div>`).join("") : `<p class="note">No data yet.</p>`;
+  }
+
+  function barChart(el, data, { height = 200, width = 800, tip, labelEvery = 1 } = {}) {
+    const W = width, H = height, padL = 34, padB = 22, padT = 8;
+    const max = Math.max(1, ...data.map((d) => d.value));
+    // Whole-number ticks on a 1-2-5 step, at most 5 gridlines.
+    const raw = max / 4, mag = Math.pow(10, Math.floor(Math.log10(raw || 1)));
+    const tick = Math.max(1, [1, 2, 5, 10].map((m) => m * mag).find((t) => t >= raw));
+    const nice = Math.ceil(max / tick) * tick, ticks = Math.round(nice / tick);
+    const n = data.length, slot = (W - padL) / n, gap = Math.min(8, slot * 0.25), bw = Math.max(2, slot - gap);
+    const y = (v) => padT + (H - padT - padB) * (1 - v / nice);
+    let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Bar chart"><g class="axis">`;
+    for (let i = 0; i <= ticks; i++) {
+      const v = tick * i, yy = y(v);
+      svg += `<line class="gridline" x1="${padL}" x2="${W}" y1="${yy}" y2="${yy}"/><text x="${padL - 6}" y="${yy + 4}" text-anchor="end">${Math.round(v)}</text>`;
+    }
+    data.forEach((d, i) => {
+      if (i % labelEvery === 0 || i === n - 1) svg += `<text x="${padL + i * slot + slot / 2}" y="${H - 6}" text-anchor="middle">${esc(d.label)}</text>`;
+    });
+    svg += `</g>`;
+    data.forEach((d, i) => {
+      const x = padL + i * slot + gap / 2, top = y(d.value), h = Math.max(0, H - padB - top);
+      const r = Math.min(4, bw / 2, h);
+      const path = h > 0 ? `M${x},${H - padB} V${top + r} Q${x},${top} ${x + r},${top} H${x + bw - r} Q${x + bw},${top} ${x + bw},${top + r} V${H - padB} Z` : "";
+      svg += `<rect class="hit" data-i="${i}" x="${padL + i * slot}" y="${padT}" width="${slot}" height="${H - padT - padB}"/>`;
+      if (path) svg += `<path class="bar" data-bar="${i}" d="${path}"/>`;
+    });
+    svg += `</svg>`;
+    el.innerHTML = svg + `<div class="tip" hidden></div>`;
+    const tipEl = el.querySelector(".tip");
+    el.querySelectorAll(".hit").forEach((h) => {
+      h.addEventListener("mouseenter", () => {
+        const i = +h.dataset.i, d = data[i];
+        el.querySelectorAll(".bar").forEach((b) => b.classList.toggle("hover", b.dataset.bar === String(i)));
+        const box = el.getBoundingClientRect(), r = h.getBoundingClientRect();
+        tipEl.innerHTML = tip(d); tipEl.hidden = false;
+        tipEl.style.left = `${r.left - box.left + r.width / 2}px`;
+        tipEl.style.top = `${(y(d.value) / H) * box.height}px`;
+      });
+      h.addEventListener("mouseleave", () => { tipEl.hidden = true; el.querySelectorAll(".bar").forEach((b) => b.classList.remove("hover")); });
+    });
+  }
+
+  function render(m) {
+    $("#asof").textContent = `Updated ${m.generated_at.replace("T", " ").slice(0, 16)} UTC · ${m.window_days}-day window`;
+    const u = m.users, s = m.sessions, nb = m.notebooks;
+    $("#kpis").innerHTML = [
+      kpi("Weekly savers", num(u.weekly_savers), "Visitors who saved anything in the last 7 days", true),
+      kpi("Active today", num(u.dau_today), `Avg ${u.avg_dau} a day`),
+      kpi("Weekly active", num(u.wau), "Last 7 days"),
+      kpi("Monthly active", num(u.mau), "Last 30 days"),
+      kpi("Stickiness", pct(u.stickiness_dau_over_mau), "Avg daily ÷ monthly active"),
+      kpi("Came back in 7 days", pct(u.returned_within_7_days), `Of ${num(u.return_cohort_size)} visitors first seen 8–37 days ago`),
+      kpi("One-and-done", pct(s.one_and_done), "Sessions with a single question"),
+    ].join("");
+
+    const daily = m.daily.map((d) => ({ label: d.day.slice(5), value: d.dau, d }));
+    barChart($("#dauChart"), daily, {
+      labelEvery: Math.ceil(daily.length / 10),
+      tip: (x) => `<strong>${x.d.day}</strong><br>${x.d.dau} active · ${x.d.new} new · ${x.d.dau - x.d.new} returning<br>WAU ${x.d.wau} · MAU ${x.d.mau}`,
+    });
+    $("#dauTable").innerHTML = `<table><thead><tr><th>Day</th><th>Active</th><th>New</th><th>WAU</th><th>MAU</th></tr></thead><tbody>${
+      m.daily.slice().reverse().map((d) => `<tr><td>${d.day}</td><td>${d.dau}</td><td>${d.new}</td><td>${d.wau}</td><td>${d.mau}</td></tr>`).join("")}</tbody></table>`;
+
+    const th = s.turns_histogram;
+    $("#turnsSub").textContent = `${num(s.with_questions)} sessions with questions · average ${s.avg_turns ?? "–"} questions`;
+    barChart($("#turnsChart"), ["1", "2", "3-5", "6+"].map((k) => ({ label: `${k} question${k === "1" ? "" : "s"}`, value: th[k] || 0 })), {
+      height: 200, width: 420,
+      tip: (x) => `<strong>${x.label}</strong><br>${x.value} sessions · ${pct(s.with_questions ? x.value / s.with_questions : null)}`,
+    });
+
+    const saves = nb.saves_by_kind || {}, ex = nb.exports_by_format || {};
+    $("#nbStats").innerHTML = [
+      ["Notebooks created", num(nb.created)],
+      ["Sessions that saved", pct(s.with_save)],
+      ["Sessions that exported", pct(s.with_export)],
+      ["Answers saved", num(saves.answer || 0)],
+      ["Quotes saved", num(saves.quote || 0)],
+      ["Topics saved", num(saves.topic || 0)],
+      ["Markdown exports", num(ex.markdown || 0)],
+      ["PDF exports", num(ex.pdf || 0)],
+      ["Related clicks", num(nb.related_clicks)],
+    ].map(([l, v]) => `<div class="stat"><div class="v">${v}</div><div class="l">${esc(l)}</div></div>`).join("");
+
+    const asked = m.topics.asked.map(([t, n]) => ({ label: TOPIC_NAMES[t] || t, value: n }));
+    hbars($("#topics"), asked, { total: asked.reduce((a, r) => a + r.value, 0) });
+    hbars($("#opened"), m.topics.opened.map(([t, n]) => ({ label: TOPIC_NAMES[t] || t, value: n })));
+
+    const c = m.answers.confidence || {}, total = (c.high || 0) + (c.medium || 0) + (c.low || 0);
+    const icon = (color, glyph) => `<span class="status"><span class="dot" style="background:${color}"></span>${glyph}</span> `;
+    hbars($("#coverage"), [
+      { label: "Well covered", value: c.high || 0, color: "var(--good)", prefix: icon("var(--good)", "✓") },
+      { label: "Partly covered", value: c.medium || 0, color: "var(--warning)", prefix: icon("var(--warning)", "!") },
+      { label: "Not covered", value: c.low || 0, color: "var(--critical)", prefix: icon("var(--critical)", "✕") },
+    ], { total });
+    const gaps = m.answers.not_covered_questions;
+    $("#gaps").innerHTML = gaps === undefined
+      ? `<p class="note">Turn on CITED_LOG_QUESTIONS=1 to list the questions the archive didn't cover.</p>`
+      : gaps.length ? `<h2 style="margin-top:12px">Most-asked uncovered questions</h2><ol class="qs">${gaps.map(([q, n]) => `<li>${esc(q)} <span class="note">×${n}</span></li>`).join("")}</ol>` : `<p class="note">No uncovered questions yet.</p>`;
+  }
+
+  async function boot() {
+    try {
+      const meta = await fetch("/api/meta").then((r) => r.json());
+      meta.topics.forEach((t) => (TOPIC_NAMES[t.id] = t.name));
+    } catch {}
+    if (token) load(); else $("#gate").hidden = false;
+  }
+  $("#gateForm").addEventListener("submit", (e) => {
+    e.preventDefault(); token = $("#token").value.trim();
+    try { sessionStorage.setItem("cited.admin", token); } catch {}
+    load();
+  });
+  $("#refresh").addEventListener("click", load);
+  $("#days").addEventListener("change", load);
+  $("#signout").addEventListener("click", () => { try { sessionStorage.removeItem("cited.admin"); } catch {} token = ""; $("#dash").hidden = true; $("#gate").hidden = false; });
+  boot();
+})();
+</script>
+</body>
+</html>

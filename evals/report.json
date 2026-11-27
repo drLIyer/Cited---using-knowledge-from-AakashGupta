@@ -1,0 +1,618 @@
+{
+ "report": {
+  "k": 8,
+  "questions": 50,
+  "categories": {
+   "broad": {
+    "n": 15,
+    "hit_at_k": 0.7,
+    "mrr": 0.433,
+    "topic_match": 0.635,
+    "confidence": {
+     "high": 15
+    },
+    "mean_top_score": 0.981,
+    "distinct_sources": 6.0
+   },
+   "specific": {
+    "n": 18,
+    "hit_at_k": 1.0,
+    "mrr": 0.963,
+    "topic_match": null,
+    "confidence": {
+     "high": 18
+    },
+    "mean_top_score": 0.995,
+    "distinct_sources": 3.5
+   },
+   "newsletter": {
+    "n": 9,
+    "hit_at_k": 1.0,
+    "mrr": 1.0,
+    "topic_match": null,
+    "confidence": {
+     "high": 9
+    },
+    "mean_top_score": 1.0,
+    "distinct_sources": 5.444
+   },
+   "out_of_scope": {
+    "n": 8,
+    "hit_at_k": null,
+    "mrr": null,
+    "topic_match": null,
+    "confidence": {
+     "low": 8
+    },
+    "mean_top_score": 0.001,
+    "distinct_sources": 7.125
+   }
+  },
+  "summary": {
+   "hit_at_k": 0.919,
+   "mrr": 0.829,
+   "in_scope_marked_low": 0.0,
+   "out_of_scope_marked_low": 1.0,
+   "links_ok": 1.0,
+   "latency_p50_s": 1.77,
+   "latency_p95_s": 2.0
+  },
+  "misses": [
+   {
+    "q": "How do you build a product strategy?",
+    "got": "news:strategy-in-1-day-week-month"
+   },
+   {
+    "q": "How do you manage a team of product managers?",
+    "got": "news:data-driven-product-teams"
+   },
+   {
+    "q": "How do I position a B2B product?",
+    "got": "pod:2024-12-18-how-to-drive-growth-in-b2b-products"
+   }
+  ],
+  "oos_not_low": [],
+  "in_scope_low": []
+ },
+ "rows": [
+  {
+   "q": "How should I price a new AI feature?",
+   "cat": "broad",
+   "confidence": "high",
+   "top_score": 0.864,
+   "top_doc": "news:deepseek-v32",
+   "distinct_sources": 6,
+   "topic_match": 0.375,
+   "links_ok": true
+  },
+  {
+   "q": "When should a SaaS company raise prices?",
+   "cat": "broad",
+   "confidence": "high",
+   "top_score": 0.977,
+   "top_doc": "pod:2024-08-19-pricing-masterclass",
+   "distinct_sources": 5,
+   "hit": true,
+   "rr": 1.0,
+   "topic_match": 0.625,
+   "links_ok": true
+  },
+  {
+   "q": "What makes a good North Star metric?",
+   "cat": "broad",
+   "confidence": "high",
+   "top_score": 0.993,
+   "top_doc": "pod:2024-10-15-how-to-crush-your-growth-role-with",
+   "distinct_sources": 7,
+   "topic_match": 1.0,
+   "links_ok": true
+  },
+  {
+   "q": "How do I run AI evals as a product manager?",
+   "cat": "broad",
+   "confidence": "high",
+   "top_score": 0.997,
+   "top_doc": "pod:2026-05-22-aparna-dhinakaran-podcast",
+   "distinct_sources": 5,
+   "hit": true,
+   "rr": 1.0,
+   "topic_match": 1.0,
+   "links_ok": true
+  },
+  {
+   "q": "How do I land my first PM job?",
+   "cat": "broad",
+   "confidence": "high",
+   "top_score": 0.999,
+   "top_doc": "pod:2025-11-19-hamza-farooq-podcast",
+   "distinct_sources": 5,
+   "topic_match": 0.875,
+   "links_ok": true
+  },
+  {
+   "q": "What is product-led growth and when does it work?",
+   "cat": "broad",
+   "confidence": "high",
+   "top_score": 0.997,
+   "top_doc": "news:what-is-product-growth",
+   "distinct_sources": 6,
+   "hit": true,
+   "rr": 0.5,
+   "topic_match": 1.0,
+   "links_ok": true
+  },
+  {
+   "q": "How do you build a product strategy?",
+   "cat": "broad",
+   "confidence": "high",
+   "top_score": 0.999,
+   "top_doc": "news:strategy-in-1-day-week-month",
+   "distinct_sources": 6,
+   "hit": false,
+   "rr": 0.0,
+   "topic_match": 0.875,
+   "links_ok": true
+  },
+  {
+   "q": "How should PMs use Claude Code?",
+   "cat": "broad",
+   "confidence": "high",
+   "top_score": 0.999,
+   "top_doc": "pod:2025-10-04-carl-vellotti-podcast",
+   "distinct_sources": 6,
+   "hit": true,
+   "rr": 1.0,
+   "topic_match": 0.125,
+   "links_ok": true
+  },
+  {
+   "q": "How do I improve retention and reduce churn?",
+   "cat": "broad",
+   "confidence": "high",
+   "top_score": 0.965,
+   "top_doc": "pod:2024-12-11-how-to-succeed-as-a-head-of-growth",
+   "distinct_sources": 7,
+   "topic_match": 0.625,
+   "links_ok": true
+  },
+  {
+   "q": "What does a head of growth actually do?",
+   "cat": "broad",
+   "confidence": "high",
+   "top_score": 0.986,
+   "top_doc": "pod:2024-11-06-the-ultimate-guide-to-growth-marketing",
+   "distinct_sources": 4,
+   "hit": true,
+   "rr": 0.3333333333333333,
+   "topic_match": 0.14285714285714285,
+   "links_ok": true
+  },
+  {
+   "q": "How do I do good customer discovery interviews?",
+   "cat": "broad",
+   "confidence": "high",
+   "top_score": 0.991,
+   "top_doc": "pod:2025-08-12-teresa-torres-podcast",
+   "distinct_sources": 5,
+   "topic_match": 0.875,
+   "links_ok": true
+  },
+  {
+   "q": "How should a PM prototype with AI tools?",
+   "cat": "broad",
+   "confidence": "high",
+   "top_score": 0.998,
+   "top_doc": "pod:2025-02-28-ai-prototyping-for-pms",
+   "distinct_sources": 7,
+   "hit": true,
+   "rr": 0.16666666666666666,
+   "topic_match": 0.75,
+   "links_ok": true
+  },
+  {
+   "q": "How do I become an AI PM?",
+   "cat": "broad",
+   "confidence": "high",
+   "top_score": 1.0,
+   "top_doc": "pod:2025-07-27-ankit-shukla-podcast",
+   "distinct_sources": 6,
+   "hit": true,
+   "rr": 0.3333333333333333,
+   "topic_match": 0.375,
+   "links_ok": true
+  },
+  {
+   "q": "How do you manage a team of product managers?",
+   "cat": "broad",
+   "confidence": "high",
+   "top_score": 0.995,
+   "top_doc": "news:data-driven-product-teams",
+   "distinct_sources": 8,
+   "hit": false,
+   "rr": 0.0,
+   "topic_match": 0.75,
+   "links_ok": true
+  },
+  {
+   "q": "How do I position a B2B product?",
+   "cat": "broad",
+   "confidence": "high",
+   "top_score": 0.959,
+   "top_doc": "pod:2024-12-18-how-to-drive-growth-in-b2b-products",
+   "distinct_sources": 7,
+   "hit": false,
+   "rr": 0.0,
+   "topic_match": 0.125,
+   "links_ok": true
+  },
+  {
+   "q": "What does Kyle Poyar say about grandfathering existing customers after a price increase?",
+   "cat": "specific",
+   "confidence": "high",
+   "top_score": 0.959,
+   "top_doc": "pod:2024-08-19-pricing-masterclass",
+   "distinct_sources": 4,
+   "hit": true,
+   "rr": 1.0,
+   "links_ok": true
+  },
+  {
+   "q": "What does Marty Cagan say about the product operating model?",
+   "cat": "specific",
+   "confidence": "high",
+   "top_score": 0.998,
+   "top_doc": "pod:2025-02-21-the-marty-cagan-episode-product-management",
+   "distinct_sources": 5,
+   "hit": true,
+   "rr": 1.0,
+   "links_ok": true
+  },
+  {
+   "q": "How did Swiggy grow to a million orders a day?",
+   "cat": "specific",
+   "confidence": "high",
+   "top_score": 0.999,
+   "top_doc": "pod:2025-01-14-how-swiggy-went-from-30k-to-1-million",
+   "distinct_sources": 2,
+   "hit": true,
+   "rr": 1.0,
+   "links_ok": true
+  },
+  {
+   "q": "What is Zapier's AI fluency rubric for PMs?",
+   "cat": "specific",
+   "confidence": "high",
+   "top_score": 0.996,
+   "top_doc": "pod:2026-09-24-zapier-ai-fluency-rubric-for-pms",
+   "distinct_sources": 4,
+   "hit": true,
+   "rr": 1.0,
+   "links_ok": true
+  },
+  {
+   "q": "What does Jack Hirsch say about AI security for PMs?",
+   "cat": "specific",
+   "confidence": "high",
+   "top_score": 1.0,
+   "top_doc": "pod:2025-09-22-jack-hirsch-podcast",
+   "distinct_sources": 1,
+   "hit": true,
+   "rr": 1.0,
+   "links_ok": true
+  },
+  {
+   "q": "How does Amplitude's CEO think about demos and storytelling?",
+   "cat": "specific",
+   "confidence": "high",
+   "top_score": 0.964,
+   "top_doc": "pod:2025-04-18-spenser-skates-podcast",
+   "distinct_sources": 7,
+   "hit": true,
+   "rr": 1.0,
+   "links_ok": true
+  },
+  {
+   "q": "Why does Abishek Viswanathan think product management won't exist in 5 years?",
+   "cat": "specific",
+   "confidence": "high",
+   "top_score": 1.0,
+   "top_doc": "pod:2025-02-18-pm-isnt-going-to-exist",
+   "distinct_sources": 1,
+   "hit": true,
+   "rr": 1.0,
+   "links_ok": true
+  },
+  {
+   "q": "What does Mark Pincus mean by stealing your way to a hit product?",
+   "cat": "specific",
+   "confidence": "high",
+   "top_score": 1.0,
+   "top_doc": "pod:2026-10-26-how-to-steal-your-way-to-a-hit-product",
+   "distinct_sources": 1,
+   "hit": true,
+   "rr": 1.0,
+   "links_ok": true
+  },
+  {
+   "q": "How do you build ChatGPT apps?",
+   "cat": "specific",
+   "confidence": "high",
+   "top_score": 1.0,
+   "top_doc": "pod:2026-01-22-colin-matthews-podcast",
+   "distinct_sources": 1,
+   "hit": true,
+   "rr": 1.0,
+   "links_ok": true
+  },
+  {
+   "q": "When should I use Claude chat vs Cowork vs Claude Code?",
+   "cat": "specific",
+   "confidence": "high",
+   "top_score": 0.999,
+   "top_doc": "pod:2026-05-14-ai-pms-guide-to-claude",
+   "distinct_sources": 3,
+   "hit": true,
+   "rr": 1.0,
+   "links_ok": true
+  },
+  {
+   "q": "What does Eric Ries say about governance for PMs?",
+   "cat": "specific",
+   "confidence": "high",
+   "top_score": 0.999,
+   "top_doc": "pod:2026-07-20-eric-ries-incorruptible",
+   "distinct_sources": 1,
+   "hit": true,
+   "rr": 1.0,
+   "links_ok": true
+  },
+  {
+   "q": "Why does n8n's CEO think they aren't dead because of AI coding tools?",
+   "cat": "specific",
+   "confidence": "high",
+   "top_score": 0.999,
+   "top_doc": "pod:2026-10-05-n8n-vs-claude-code",
+   "distinct_sources": 6,
+   "hit": true,
+   "rr": 1.0,
+   "links_ok": true
+  },
+  {
+   "q": "How did Freshworks adopt an AI product development lifecycle?",
+   "cat": "specific",
+   "confidence": "high",
+   "top_score": 0.999,
+   "top_doc": "pod:2026-08-24-srini-raghavan-podcast",
+   "distinct_sources": 6,
+   "hit": true,
+   "rr": 1.0,
+   "links_ok": true
+  },
+  {
+   "q": "What AI tools does the Together AI product team use?",
+   "cat": "specific",
+   "confidence": "high",
+   "top_score": 0.998,
+   "top_doc": "pod:2026-09-14-together-ai-product-team",
+   "distinct_sources": 7,
+   "hit": true,
+   "rr": 1.0,
+   "links_ok": true
+  },
+  {
+   "q": "How do you use Claude Code for growth marketing?",
+   "cat": "specific",
+   "confidence": "high",
+   "top_score": 0.999,
+   "top_doc": "pod:2026-10-20-claude-code-for-growth",
+   "distinct_sources": 6,
+   "hit": true,
+   "rr": 1.0,
+   "links_ok": true
+  },
+  {
+   "q": "What are the messy realities of B2B product management?",
+   "cat": "specific",
+   "confidence": "high",
+   "top_score": 0.999,
+   "top_doc": "pod:2024-08-26-messy-reality-of-b2b-pm",
+   "distinct_sources": 1,
+   "hit": true,
+   "rr": 1.0,
+   "links_ok": true
+  },
+  {
+   "q": "How do you go from PM to product builder?",
+   "cat": "specific",
+   "confidence": "high",
+   "top_score": 0.996,
+   "top_doc": "pod:2026-04-20-how-to-become-a-builder-pm",
+   "distinct_sources": 6,
+   "hit": true,
+   "rr": 0.3333333333333333,
+   "links_ok": true
+  },
+  {
+   "q": "How do VPs of product use Claude without producing slop?",
+   "cat": "specific",
+   "confidence": "high",
+   "top_score": 1.0,
+   "top_doc": "pod:2026-06-09-claude-vp",
+   "distinct_sources": 1,
+   "hit": true,
+   "rr": 1.0,
+   "links_ok": true
+  },
+  {
+   "q": "How should a PM deal with tech debt?",
+   "cat": "newsletter",
+   "confidence": "high",
+   "top_score": 1.0,
+   "top_doc": "news:tech-debt",
+   "distinct_sources": 6,
+   "hit": true,
+   "rr": 1.0,
+   "links_ok": true
+  },
+  {
+   "q": "What did Netflix learn about experimentation?",
+   "cat": "newsletter",
+   "confidence": "high",
+   "top_score": 1.0,
+   "top_doc": "news:netflix-experimentation",
+   "distinct_sources": 3,
+   "hit": true,
+   "rr": 1.0,
+   "links_ok": true
+  },
+  {
+   "q": "How did Miro grow?",
+   "cat": "newsletter",
+   "confidence": "high",
+   "top_score": 1.0,
+   "top_doc": "news:how-miro-grows-tactical-lessons-from",
+   "distinct_sources": 3,
+   "hit": true,
+   "rr": 1.0,
+   "links_ok": true
+  },
+  {
+   "q": "How did Nubank build a neobank?",
+   "cat": "newsletter",
+   "confidence": "high",
+   "top_score": 1.0,
+   "top_doc": "news:how-to-build-a-neobank-the-nubank",
+   "distinct_sources": 5,
+   "hit": true,
+   "rr": 1.0,
+   "links_ok": true
+  },
+  {
+   "q": "Why do writing cultures fail?",
+   "cat": "newsletter",
+   "confidence": "high",
+   "top_score": 1.0,
+   "top_doc": "news:-how-writing-cultures-fail",
+   "distinct_sources": 7,
+   "hit": true,
+   "rr": 1.0,
+   "links_ok": true
+  },
+  {
+   "q": "How did Spotify win podcasts from Apple?",
+   "cat": "newsletter",
+   "confidence": "high",
+   "top_score": 1.0,
+   "top_doc": "news:spotify-podcasts-apple",
+   "distinct_sources": 5,
+   "hit": true,
+   "rr": 1.0,
+   "links_ok": true
+  },
+  {
+   "q": "What is the history of product management?",
+   "cat": "newsletter",
+   "confidence": "high",
+   "top_score": 0.999,
+   "top_doc": "news:history-of-pm",
+   "distinct_sources": 7,
+   "hit": true,
+   "rr": 1.0,
+   "links_ok": true
+  },
+  {
+   "q": "Why did Rocket Companies acquire Truebill?",
+   "cat": "newsletter",
+   "confidence": "high",
+   "top_score": 1.0,
+   "top_doc": "news:rocket-plus-truebill",
+   "distinct_sources": 6,
+   "hit": true,
+   "rr": 1.0,
+   "links_ok": true
+  },
+  {
+   "q": "How should a PM adjust to their situation?",
+   "cat": "newsletter",
+   "confidence": "high",
+   "top_score": 1.0,
+   "top_doc": "news:adjust-situation-pm",
+   "distinct_sources": 7,
+   "hit": true,
+   "rr": 1.0,
+   "links_ok": true
+  },
+  {
+   "q": "What is the best recipe for sourdough bread?",
+   "cat": "out_of_scope",
+   "confidence": "low",
+   "top_score": 0.001,
+   "top_doc": "news:-wordle-is-the-anti-growth-hack",
+   "distinct_sources": 8,
+   "links_ok": true
+  },
+  {
+   "q": "How do I file my US taxes as a freelancer?",
+   "cat": "out_of_scope",
+   "confidence": "low",
+   "top_score": 0.0,
+   "top_doc": "pod:2024-09-13-masterclass-product-agencies",
+   "distinct_sources": 5,
+   "links_ok": true
+  },
+  {
+   "q": "Who won the 2022 football World Cup?",
+   "cat": "out_of_scope",
+   "confidence": "low",
+   "top_score": 0.001,
+   "top_doc": "news:-wordle-is-the-anti-growth-hack",
+   "distinct_sources": 6,
+   "links_ok": true
+  },
+  {
+   "q": "How do I train for a marathon?",
+   "cat": "out_of_scope",
+   "confidence": "low",
+   "top_score": 0.006,
+   "top_doc": "pod:2025-09-13-mahesh-yadav-podcast",
+   "distinct_sources": 8,
+   "links_ok": true
+  },
+  {
+   "q": "What's the capital of Australia?",
+   "cat": "out_of_scope",
+   "confidence": "low",
+   "top_score": 0.0,
+   "top_doc": "pod:2025-04-19-live-with-aakash-gupta",
+   "distinct_sources": 7,
+   "links_ok": true
+  },
+  {
+   "q": "How do I fix a leaking kitchen tap?",
+   "cat": "out_of_scope",
+   "confidence": "low",
+   "top_score": 0.001,
+   "top_doc": "pod:2024-09-13-masterclass-product-agencies",
+   "distinct_sources": 8,
+   "links_ok": true
+  },
+  {
+   "q": "Which dog breeds are best for apartments?",
+   "cat": "out_of_scope",
+   "confidence": "low",
+   "top_score": 0.0,
+   "top_doc": "pod:2024-09-16-mastering-go-to-market-strategy",
+   "distinct_sources": 7,
+   "links_ok": true
+  },
+  {
+   "q": "What are the side effects of ibuprofen?",
+   "cat": "out_of_scope",
+   "confidence": "low",
+   "top_score": 0.0,
+   "top_doc": "pod:2024-09-20-plg-masterclass-in-2024",
+   "distinct_sources": 8,
+   "links_ok": true
+  }
+ ]
+}
