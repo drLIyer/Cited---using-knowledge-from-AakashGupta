@@ -33,8 +33,8 @@ EMBED_MODEL = os.getenv("CITED_EMBED_MODEL", "BAAI/bge-small-en-v1.5")
 RERANK_MODEL = os.getenv("CITED_RERANK_MODEL", "Xenova/ms-marco-MiniLM-L-6-v2")
 
 # Chunking
-CHUNK_TARGET_WORDS = int(os.getenv("CITED_CHUNK_WORDS", "260"))
-CHUNK_MAX_WORDS = int(os.getenv("CITED_CHUNK_MAX_WORDS", "420"))
+CHUNK_TARGET_WORDS = int(os.getenv("CITED_CHUNK_WORDS", "220"))
+CHUNK_MAX_WORDS = int(os.getenv("CITED_CHUNK_MAX_WORDS", "340"))
 
 # Retrieval
 CANDIDATES = int(os.getenv("CITED_CANDIDATES", "40"))   # per retriever, before fusion
