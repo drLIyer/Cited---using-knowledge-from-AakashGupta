@@ -26,8 +26,8 @@ from pathlib import Path
 from . import config
 
 CLIENT_EVENTS = {"visit", "save", "notebook_created", "export", "related_click", "topic_open",
-                 "auto_added", "auto_removed", "auto_toggle"}
-SERVER_EVENTS = {"ask"}
+                 "auto_added", "auto_removed", "auto_toggle", "copy", "signin_prompt"}
+SERVER_EVENTS = {"ask", "signup", "signin", "limit_hit", "email_notebook"}
 _ID = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
 _FIELD_LIMITS = {"topic": 40, "kind": 20, "value": 40, "confidence": 10}
 
@@ -180,6 +180,14 @@ class Analytics:
                 "auto_added": sum(1 for e in events if e["type"] == "auto_added"),
                 "auto_removed": sum(1 for e in events if e["type"] == "auto_removed"),
                 "auto_turned_off": sum(1 for e in events if e["type"] == "auto_toggle" and e["value"] == "off"),
+                "emailed": sum(1 for e in events if e["type"] == "email_notebook"),
+                "copies": sum(1 for e in events if e["type"] == "copy"),
+            },
+            "signins": {
+                "signups": sum(1 for e in events if e["type"] == "signup"),
+                "signins": sum(1 for e in events if e["type"] == "signin"),
+                "prompts_shown": sum(1 for e in events if e["type"] == "signin_prompt"),
+                "limit_hits": dict(Counter(e["kind"] for e in events if e["type"] == "limit_hit")),
             },
             "topics": {
                 "asked": topic_asks.most_common(),

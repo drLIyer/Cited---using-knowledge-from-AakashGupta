@@ -38,11 +38,16 @@
   let history = [];
   let meta = null;
   let busy = false;
+  let me = null;               // signed-in user, or null
+  let chatId = rid();          // one conversation; "New chat" starts another
+  let chatTurns = [];          // this chat's turns (saved to the account when signed in)
+  const synced = {};           // notebook id -> JSON last sent to the server
   const STORAGE_BUDGET = 4.5 * 1024 * 1024; // browsers allow ~5 MB per site
   let storageWarned = false;
   const persist = () => {
     const ok = store.set("cited.notebooks", notebooks) && store.set("cited.active", activeId);
     renderNotebooks();
+    if (me) scheduleSync();
     if (!ok) {
       toast("Couldn't save: this browser's notebook storage is full or blocked. Export your notebook, then remove old items.");
       return false;
@@ -150,11 +155,14 @@
     try {
       const res = await fetch("/api/ask", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question, history: opts.fresh ? [] : history.slice(-8), fresh: !!opts.fresh, visitor_id: visitorId, session_id: sessionId }),
+        body: JSON.stringify({ question, history: opts.fresh ? [] : history.slice(-8), fresh: !!opts.fresh, visitor_id: visitorId, session_id: sessionId, chat_id: chatId }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        card.replaceChildren(el("div", { class: "notice notice--warn" }, err.error || "Something went wrong. Please try again."));
+        const actions = el("div", { class: "limit-actions" });
+        if (err.limit?.reason === "chat_full") actions.append(el("button", { class: "btn btn--primary", onclick: () => { newChat(); $("#input").value = question; $("#input").focus(); } }, "Start a new chat"));
+        if (err.limit && !me) actions.append(el("button", { class: "btn", onclick: () => openSignin() }, "Sign in"));
+        card.replaceChildren(el("div", { class: "notice notice--warn" }, err.error || "Something went wrong. Please try again.", actions.children.length ? actions : null));
         return;
       }
       card.replaceChildren(head, notices, body, srcBox);
@@ -180,10 +188,17 @@
       if (state.mode === "streaming") { state.mode = "answered"; paint(); }
       if (state.text) history.push({ role: "user", content: question }, { role: "assistant", content: state.text });
       history = history.slice(-8);
+      if (state.sources.length || state.text) {
+        chatTurns.push({ q: question, answer: state.text, sources: state.sources, confidence: state.confidence, mode: state.mode });
+        if (me) saveChat();
+      }
     }
 
     function handle(ev) {
       switch (ev.type) {
+        case "allowance":
+          renderUsage(ev);
+          break;
         case "sources":
           state.sources = ev.sources; state.confidence = ev.confidence; state.more = ev.more || [];
           head.replaceChildren(confPill(ev.confidence), el("span", { class: "tag" }, `${ev.sources.length} passages · ${new Set(ev.sources.map((s) => s.doc_id)).size} episodes and posts`));
@@ -335,6 +350,7 @@
     if (!persist()) { nb.entries.pop(); renderDrawer(); return; }
     renderDrawer();
     track("save", { kind: entry.kind });
+    maybePromptSignin();
     toast(`Saved to “${nb.title}”`);
   }
 
@@ -407,7 +423,11 @@
       track("auto_toggle", { value: toggle.checked ? "on" : "off" });
     });
     entries.prepend(el("label", { class: "auto-toggle", for: "autoAdd" }, toggle,
-      " Add new episodes and posts that match this notebook when I come back"));
+      me?.plan === "member" ? " Add new episodes and posts that match this notebook when I come back"
+        : " Add matching new episodes and posts (members)"));
+    if (nb.teaser && me?.plan !== "member") {
+      entries.prepend(el("div", { class: "teaser" }, `${nb.teaser} new ${nb.teaser === 1 ? "episode or post matches" : "episodes and posts match"} this notebook. Members get them added automatically.`));
+    }
   }
 
   // ── New content for notebooks ──────────────────────────────────────────────
@@ -435,7 +455,15 @@
         body: JSON.stringify({ notebooks: eligible.slice(0, 20).map(summarize) }) }).then((r) => r.json());
     } catch { return; }
     let added = 0;
+    if (!res.member) {
+      const total = Object.values(res.teaser || {}).reduce((a, b) => a + b, 0);
+      for (const nb of eligible) { nb.teaser = res.teaser?.[nb.id] || 0; }
+      persist();
+      if (total) toast(`${total} new ${total === 1 ? "episode or post matches" : "episodes and posts match"} your notebooks. Members get them added automatically.`);
+      return;
+    }
     for (const nb of eligible) {
+      nb.teaser = 0;
       const items = res.notebooks?.[nb.id] || [];
       const have = new Set(nb.entries.flatMap((e) => (e.sources || (e.source ? [e.source] : [])).map((s) => (s.chunk_id || "").split("#")[0])));
       for (const s of items) {
@@ -471,6 +499,210 @@
     setTimeout(() => URL.revokeObjectURL(a.href), 4000);
   }
 
+  // ── Chats ──────────────────────────────────────────────────────────────────
+  function renderUsage(a) {
+    const u = $("#usage");
+    if (!a || a.member) { u.textContent = a?.member ? "Member: unlimited chats" : ""; return; }
+    u.textContent = `Question ${a.turns_used} of ${a.turns_max} in this chat · chat ${a.chats_today} of ${a.chats_max} today`;
+  }
+
+  function newChat() {
+    chatId = rid(); chatTurns = []; history = [];
+    $("#thread").replaceChildren(); $("#thread").hidden = true; $("#topicView").hidden = true; $("#hero").hidden = false;
+    $("#usage").textContent = "";
+    window.scrollTo({ top: 0 });
+  }
+
+  let chatSaveTimer;
+  function saveChat() {
+    clearTimeout(chatSaveTimer);
+    const id = chatId, turns = chatTurns.slice(-50), title = turns[0]?.q || "Chat";
+    chatSaveTimer = setTimeout(async () => {
+      try {
+        await fetch(`/api/me/chats/${id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title, turns }) });
+        loadChats();
+      } catch { /* retried on the next turn */ }
+    }, 300);
+  }
+
+  async function loadChats() {
+    if (!me) { $("#chatsSection").hidden = true; return; }
+    const res = await fetch("/api/me/chats").then((r) => r.ok ? r.json() : { chats: [] }).catch(() => ({ chats: [] }));
+    $("#chatsSection").hidden = false;
+    const list = $("#chatList");
+    list.replaceChildren(...res.chats.slice(0, 15).map((c) => el("li", { class: "chat-item" },
+      el("button", { class: c.id === chatId ? "active" : "", onclick: () => openChat(c.id) },
+        el("span", {}, c.title.length > 40 ? c.title.slice(0, 40) + "…" : c.title), el("small", {}, String(c.turns))))));
+    if (!res.chats.length) list.append(el("li", { class: "empty-note" }, "Your chats will appear here."));
+  }
+
+  async function openChat(id) {
+    const chat = await fetch(`/api/me/chats/${id}`).then((r) => r.ok ? r.json() : null).catch(() => null);
+    if (!chat) return toast("Couldn't open that chat.");
+    newChat();
+    chatId = id; chatTurns = chat.turns || [];
+    history = chatTurns.flatMap((t) => t.answer ? [{ role: "user", content: t.q }, { role: "assistant", content: t.answer }] : []).slice(-8);
+    $("#hero").hidden = true; $("#thread").hidden = false;
+    for (const t of chatTurns) {
+      const card = el("div", { class: "card" },
+        el("div", { class: "answer-head" }, confPill(t.confidence), el("span", { class: "tag" }, "Saved chat")),
+        t.answer ? md(t.answer) : el("div", { class: "notice notice--info" }, "Sources for this question:"),
+        el("div", { class: "sources-title" }, "Sources"),
+        el("div", { class: "sources" }, (t.sources || []).map((s, i) => sourceCard(s, i + 1))));
+      $("#thread").append(el("article", { class: "turn" }, el("h2", { class: "q" }, t.q), card));
+    }
+    closeSidebar(); loadChats();
+  }
+
+  // ── Sign-in (email + 6-digit code) ─────────────────────────────────────────
+  async function api(path, body) {
+    const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error || data.detail || "Something went wrong. Please try again.");
+    return data;
+  }
+
+  function openSignin() {
+    const d = $("#signinDialog");
+    $("#signinEmailStep").hidden = false; $("#signinCodeStep").hidden = true;
+    $("#signinErr").textContent = ""; $("#signinNext").textContent = "Email me a code"; $("#signinCode").value = "";
+    d.showModal(); $("#signinEmail").focus();
+  }
+
+  async function signinNext(e) {
+    if (e.submitter?.value === "cancel") return;
+    e.preventDefault();
+    const email = $("#signinEmail").value.trim();
+    $("#signinErr").textContent = "";
+    try {
+      if (!$("#signinCodeStep").hidden) {
+        await finishSignin(email, $("#signinCode").value);
+        $("#signinDialog").close();
+        return;
+      }
+      await api("/api/auth/request-code", { email });
+      $("#signinEmailStep").hidden = true; $("#signinCodeStep").hidden = false;
+      $("#signinSentTo").textContent = `Sent to ${email}. It works for 10 minutes.`;
+      $("#signinNext").textContent = "Sign in"; $("#signinCode").focus();
+    } catch (err) { $("#signinErr").textContent = err.message; }
+  }
+
+  async function finishSignin(email, code) {
+    const res = await api("/api/auth/verify", { email, code, visitor_id: visitorId, session_id: sessionId });
+    me = res.user;
+    await syncAll();
+    if (chatTurns.length) saveChat();
+    renderAccount(); loadChats();
+    toast(res.created ? "Welcome! Your notebooks and chats are now saved to your account." : "Signed in. Your notebooks are synced.");
+  }
+
+  async function signout() {
+    await api("/api/auth/signout").catch(() => {});
+    me = null; renderAccount(); loadChats(); toast("Signed out. Notebooks stay in this browser until you clear it.");
+  }
+
+  function renderAccount() {
+    $("#accountBtn").textContent = me ? (me.email.length > 22 ? me.email.slice(0, 20) + "…" : me.email) : "Sign in";
+    $("#drawerHint").replaceChildren(...(me
+      ? [el("strong", {}, "Synced to your account. "), `Your notebooks are saved for ${me.email} and appear on any device where you sign in.`]
+      : [el("strong", {}, "No account needed. "), "Notebooks stay in this browser only. ",
+         el("button", { class: "link-btn", onclick: () => openSignin() }, "Sign in"), " to keep them on every device, or download or email a copy."]));
+    renderDrawer();
+  }
+
+  // Merge this browser's notebooks with the account's: newest edit wins, nothing is dropped.
+  async function syncAll() {
+    if (!me) return;
+    const res = await fetch("/api/me/notebooks").then((r) => r.ok ? r.json() : null).catch(() => null);
+    if (!res) return;
+    const server = Object.fromEntries(res.notebooks.map((n) => [n.id, n]));
+    const merged = [];
+    for (const nb of notebooks) {
+      const sv = server[nb.id];
+      merged.push(sv && (sv.updated || "") > (nb.updated || "") ? sv : nb);
+      delete server[nb.id];
+    }
+    merged.push(...Object.values(server));
+    notebooks = merged;
+    for (const nb of notebooks) synced[nb.id] = res.notebooks.some((n) => JSON.stringify(n) === JSON.stringify(nb)) ? JSON.stringify(nb) : null;
+    if (!activeId && notebooks.length) activeId = notebooks[0].id;
+    persist();
+  }
+
+  let syncTimer;
+  function scheduleSync() {
+    clearTimeout(syncTimer);
+    syncTimer = setTimeout(async () => {
+      for (const nb of notebooks) {
+        const { updated, ...rest } = nb;
+        const body = JSON.stringify(rest);
+        if (synced[nb.id] === body) continue;
+        nb.updated = new Date().toISOString();
+        try {
+          const r = await fetch(`/api/me/notebooks/${nb.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(nb) });
+          if (r.ok) synced[nb.id] = body;
+          else { const e = await r.json().catch(() => ({})); toast(e.detail || "Couldn't sync a notebook."); }
+        } catch { /* offline: tried again on the next change */ }
+      }
+      store.set("cited.notebooks", notebooks);
+    }, 800);
+  }
+
+  function maybePromptSignin() {
+    if (me) return;
+    const saves = notebooks.reduce((a, n) => a + n.entries.length, 0);
+    const snoozed = store.get("cited.promptSnooze", 0);
+    if (saves < 3 || Date.now() < snoozed) return;
+    $("#promptCard").hidden = false;
+    track("signin_prompt");
+  }
+
+  // ── Email this notebook (and, for visitors, a sign-in code in the same email) ──
+  function openEmailDialog() {
+    const nb = active();
+    if (!nb || !nb.entries.length) return toast("Save something to this notebook first.");
+    $("#emailErr").textContent = ""; $("#emailCodeStep").hidden = true; $("#emailCode").value = "";
+    $("#emailField").hidden = !!me; $("#emailNext").textContent = "Send PDF";
+    const left = me ? me.emails_this_month : null;
+    $("#emailLede").textContent = me
+      ? `We'll email “${nb.title}” as a PDF to ${me.email}.` + (left ? ` ${left.max - left.used} of ${left.max} left this month.` : "")
+      : `We'll email “${nb.title}” as a PDF. Free: 3 a month. Downloading is always free.`;
+    $("#emailDialog").showModal();
+  }
+
+  async function emailNext(e) {
+    if (e.submitter?.value === "cancel") return;
+    e.preventDefault();
+    $("#emailErr").textContent = "";
+    const email = me ? me.email : $("#emailTo").value.trim();
+    try {
+      if (!$("#emailCodeStep").hidden) {
+        if ($("#emailCode").value.trim()) await finishSignin(email, $("#emailCode").value);
+        $("#emailDialog").close();
+        return;
+      }
+      const nb = active();
+      const res = await api("/api/notebooks/email", { email, notebook: { title: nb.title, created: nb.created, entries: nb.entries }, visitor_id: visitorId, session_id: sessionId });
+      if (me) { me.emails_this_month = res.allowance; $("#emailDialog").close(); toast(`Sent to ${res.email}.`); return; }
+      $("#emailField").hidden = true; $("#emailCodeStep").hidden = false;
+      $("#emailNext").textContent = "Done"; $("#emailCode").focus();
+    } catch (err) { $("#emailErr").textContent = err.message; }
+  }
+
+  // ── Copying: keep the credit attached ──────────────────────────────────────
+  document.addEventListener("copy", (e) => {
+    const sel = window.getSelection();
+    const text = sel ? sel.toString() : "";
+    if (text.trim().length < 20) return;
+    const node = sel.anchorNode && (sel.anchorNode.nodeType === 1 ? sel.anchorNode : sel.anchorNode.parentElement);
+    const scope = node && node.closest(".src, .answer, .turn, .entry");
+    if (!scope) return;
+    const link = (scope.closest(".src") || scope.closest(".turn"))?.querySelector(".src__actions a")?.href || location.origin;
+    e.clipboardData.setData("text/plain", `${text}\n\nvia Cited · ${link}\nSource: The Growth Podcast with Aakash Gupta (news.aakashg.com)`);
+    e.preventDefault();
+    track("copy");
+  });
+
   // ── Sidebar / mobile ───────────────────────────────────────────────────────
   function closeSidebar() { $("#sidebar").classList.remove("open"); }
 
@@ -484,6 +716,27 @@
   async function init() {
     renderNotebooks();
     track("visit");
+    try {
+      const auth = await fetch("/api/auth/me").then((r) => r.json());
+      me = auth.user;
+      if (me) await syncAll();
+    } catch { /* stays signed out */ }
+    renderAccount(); loadChats();
+    document.querySelectorAll("[data-close]").forEach((b) => b.addEventListener("click", () => $("#" + b.dataset.close).close()));
+    $("#signinForm").addEventListener("submit", signinNext);
+    $("#emailForm").addEventListener("submit", emailNext);
+    $("#emailNb").addEventListener("click", openEmailDialog);
+    $("#newChatBtn").addEventListener("click", newChat);
+    $("#accountBtn").addEventListener("click", () => {
+      if (!me) return openSignin();
+      const left = me.emails_this_month;
+      $("#accountInfo").textContent = `Signed in as ${me.email} · ${me.plan === "member" ? "Member" : "Free plan"}` +
+        (left ? ` · ${left.max - left.used} of ${left.max} notebook emails left this month` : "");
+      $("#accountDialog").showModal();
+    });
+    $("#accountDialog").addEventListener("close", () => { if ($("#accountDialog").returnValue === "signout") signout(); });
+    $("#promptSignin").addEventListener("click", () => { $("#promptCard").hidden = true; openSignin(); });
+    $("#promptLater").addEventListener("click", () => { $("#promptCard").hidden = true; store.set("cited.promptSnooze", Date.now() + 7 * 86400 * 1000); });
     try {
       meta = await fetch("/api/meta").then((r) => r.json());
       $("#statPods").textContent = meta.podcasts;

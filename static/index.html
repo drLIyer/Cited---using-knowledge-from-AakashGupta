@@ -25,6 +25,8 @@
     </a>
     <nav class="topbar__nav">
       <button class="pill-btn" id="topicsBtn">Topics</button>
+      <button class="pill-btn" id="newChatBtn" title="Start a new chat">New chat</button>
+      <button class="pill-btn" id="accountBtn">Sign in</button>
       <button class="pill-btn pill-btn--primary" id="notebookBtn">Notebook <span class="count" id="nbCount">0</span></button>
     </nav>
   </header>
@@ -37,6 +39,10 @@
           <button class="link-btn" id="newNotebookBtn">+ New</button>
         </div>
         <ul class="nb-list" id="nbList"></ul>
+      </section>
+      <section id="chatsSection" hidden>
+        <div class="sidebar__head"><h2>Saved chats</h2></div>
+        <ul class="nb-list" id="chatList"></ul>
       </section>
       <section>
         <div class="sidebar__head"><h2>Topics</h2></div>
@@ -75,10 +81,11 @@
       <p class="drawer__meta" id="nbMeta"></p>
       <div class="drawer__entries" id="nbEntries"></div>
       <div class="drawer__foot">
-        <button class="btn" id="exportMd">Export Markdown</button>
-        <button class="btn btn--primary" id="exportPdf">Export PDF</button>
+        <button class="btn" id="exportMd">Download .md</button>
+        <button class="btn" id="exportPdf">Download PDF</button>
+        <button class="btn btn--primary drawer__wide" id="emailNb">Email me this notebook</button>
       </div>
-      <p class="drawer__hint"><strong>No account needed.</strong> Notebooks stay in this browser only: they won't appear on other devices, and clearing browser data deletes them. Export to keep a copy in Google Drive, Notion or your files.</p>
+      <p class="drawer__hint" id="drawerHint"></p>
     </aside>
   </div>
 
@@ -87,7 +94,7 @@
       <textarea id="input" rows="1" placeholder="Ask about pricing, growth, AI products, PM careers…" aria-label="Your question" maxlength="1000"></textarea>
       <button class="send" type="submit" aria-label="Ask">↑</button>
     </div>
-    <p class="composer__note" id="modeNote"></p>
+    <p class="composer__note"><span id="usage"></span> <span id="modeNote"></span></p>
   </form>
 
   <dialog class="dialog" id="saveDialog">
@@ -101,6 +108,61 @@
       </menu>
     </form>
   </dialog>
+
+  <dialog class="dialog" id="signinDialog">
+    <form method="dialog" id="signinForm">
+      <h3 id="signinTitle">Sign in to Cited</h3>
+      <p class="tag" id="signinLede">Keep your chats and notebooks on every device. No password: we email you a 6-digit code.</p>
+      <div id="signinEmailStep">
+        <label class="field">Email<input id="signinEmail" type="email" autocomplete="email" placeholder="you@example.com"></label>
+      </div>
+      <div id="signinCodeStep" hidden>
+        <label class="field">Code from the email<input id="signinCode" inputmode="numeric" autocomplete="one-time-code" maxlength="7" placeholder="123456"></label>
+        <p class="tag" id="signinSentTo"></p>
+      </div>
+      <p class="err-text" id="signinErr"></p>
+      <menu>
+        <button type="button" class="btn" data-close="signinDialog">Cancel</button>
+        <button class="btn btn--primary" id="signinNext" value="next">Email me a code</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <dialog class="dialog" id="emailDialog">
+    <form method="dialog" id="emailForm">
+      <h3>Email this notebook</h3>
+      <p class="tag" id="emailLede"></p>
+      <label class="field" id="emailField">Send to<input id="emailTo" type="email" autocomplete="email" placeholder="you@example.com"></label>
+      <div id="emailCodeStep" hidden>
+        <p class="tag">Sent. <strong>Optional:</strong> the email also has a 6-digit code. Enter it to keep your notebooks and chats on every device.</p>
+        <label class="field">Code<input id="emailCode" inputmode="numeric" autocomplete="one-time-code" maxlength="7" placeholder="123456"></label>
+      </div>
+      <p class="err-text" id="emailErr"></p>
+      <menu>
+        <button type="button" class="btn" id="emailCancel" data-close="emailDialog">Cancel</button>
+        <button class="btn btn--primary" id="emailNext" value="next">Send PDF</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <dialog class="dialog" id="accountDialog">
+    <form method="dialog">
+      <h3>Your account</h3>
+      <p id="accountInfo"></p>
+      <menu>
+        <button value="signout" class="btn" id="signoutBtn">Sign out</button>
+        <button value="cancel" class="btn btn--primary">Close</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <div class="prompt-card" id="promptCard" hidden>
+    <p><strong>Keep these notebooks on every device.</strong> Sign in with your email: no password, just a code.</p>
+    <div class="save-row">
+      <button class="btn btn--primary" id="promptSignin">Sign in</button>
+      <button class="btn btn--ghost" id="promptLater">Not now</button>
+    </div>
+  </div>
 
   <div class="toast" id="toast" role="status" hidden></div>
   <script src="/static/app.js"></script>

@@ -15,12 +15,12 @@ import time
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response as FastResponse
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from cited import analytics, answer, config, export, models, search, sources, updates
+from cited import accounts, analytics, answer, config, export, mailer, models, search, sources, updates
 from cited import index as index_mod
 from cited.cache import AnswerCache, seed_from_generated
 from cited.index import Index
@@ -46,7 +46,10 @@ async def lifespan(_app: FastAPI):
     models.rerank("warm up", ["warm up"])
     stats = analytics.Analytics(analytics.default_path())
     stats.purge_questions()
-    STATE.update(index=idx, cache=cache, analytics=stats)
+    STATE.update(index=idx, cache=cache, analytics=stats, accounts=accounts.Accounts(accounts.default_path()))
+    if not mailer.configured():
+        log.warning("RESEND_API_KEY is not set: sign-in codes are written to this log, not emailed. "
+                    "Fine for testing; never for a public site.")
     log.info("Ready: %s passages, %d saved answers (%d pre-generated), answers %s",
              idx.meta["passages"], len(cache.entries), seeded,
              "ON" if answer.llm_enabled() else "OFF (search-only)")
@@ -154,6 +157,7 @@ class AskRequest(BaseModel):
     fresh: bool = False  # skip saved answers ("answer my exact question")
     visitor_id: str | None = None  # anonymous ids made in the browser (see cited/analytics.py)
     session_id: str | None = None
+    chat_id: str | None = None     # one conversation; a new chat gets a new id
 
 
 def _sse(event: dict) -> str:
@@ -161,10 +165,34 @@ def _sse(event: dict) -> str:
 
 
 @app.post("/api/ask")
-async def ask(req: AskRequest, request: Request):
+async def ask(req: AskRequest, request: Request, response: FastResponse):
     if _rate_limited(_client_ip(request)):
         return JSONResponse({"error": f"You've reached {config.RATE_LIMIT_PER_HOUR} questions this hour. "
                                       "Please come back a little later."}, status_code=429)
+    user = _current_user(request, response)
+    member = bool(user and user["plan"] == "member")
+    acc: accounts.Accounts = STATE["accounts"]
+    chat = req.chat_id if req.chat_id and accounts.ID_RE.match(req.chat_id) else (req.session_id or "default")
+    # Free tier: questions per chat and chats per day. Signed-in users are counted
+    # by account; others by browser id and, more loosely, by network address.
+    subjects = [f"u:{user['id']}"] if user else [f"v:{req.visitor_id or 'none'}"]
+    allowance = acc.chat_allowance(subjects[0], chat, member)
+    if allowance["ok"] and not user:
+        ip_allow = acc.chat_allowance(f"ip:{_client_ip(request)}", chat, member)
+        if not ip_allow["ok"] and ip_allow.get("reason") == "day_full" and ip_allow["chats_today"] >= allowance["chats_max"] * 4:
+            allowance = {**allowance, "ok": False, "reason": "day_full"}
+    if not allowance["ok"]:
+        msg = (f"This chat has reached {accounts.FREE_TURNS_PER_CHAT} questions. Start a new chat to keep going."
+               if allowance["reason"] == "chat_full" else
+               f"You've used today's {accounts.FREE_CHATS_PER_DAY} free chats. Come back tomorrow"
+               + ("." if user else ", or sign in to save your chats and notebooks."))
+        STATE["analytics"].log("limit_hit", req.visitor_id, req.session_id, kind=allowance["reason"])
+        return JSONResponse({"error": msg, "limit": allowance}, status_code=429)
+    acc.record_turn(subjects[0], chat)
+    if not user:
+        acc.record_turn(f"ip:{_client_ip(request)}", chat)
+    if not member:
+        allowance["turns_used"] += 1
     idx: Index = STATE["index"]
     cache: AnswerCache = STATE["cache"]
     question = req.question.strip()
@@ -190,6 +218,7 @@ async def ask(req: AskRequest, request: Request):
             confidence=found["confidence"]["level"], question=question)
 
     async def events():
+        yield _sse({"type": "allowance", **allowance, "signed_in": bool(user)})
         yield _sse({"type": "sources", "sources": results, "confidence": found["confidence"],
                     "more": found["more"]})
         hit = None
@@ -273,15 +302,228 @@ class UpdatesRequest(BaseModel):
 
 
 @app.post("/api/updates")
-def notebook_updates(req: UpdatesRequest):
+def notebook_updates(req: UpdatesRequest, request: Request, response: FastResponse):
     """New episodes and posts that match each notebook since it was last checked.
 
-    The notebook summaries are used for this request only and never stored."""
+    Members get the items (added to their notebooks); everyone else gets only how
+    many matched. The notebook summaries are used for this request only."""
     idx: Index = STATE["index"]
+    user = _current_user(request, response)
     nbs = [n.model_dump() for n in req.notebooks]
     for n in nbs:
         n["questions"] = [q[:300] for q in n["questions"]]
-    return updates.check(idx, nbs, idx.first_seen)
+    out = updates.check(idx, nbs, idx.first_seen)
+    out["member"] = bool(user and user["plan"] == "member")
+    if not out["member"]:
+        out["teaser"] = {k: len(v) for k, v in out["notebooks"].items() if v}
+        out["notebooks"] = {}
+    return out
+
+
+# ── Accounts: email + code sign-in, synced notebooks and chats ───────────────
+
+SESSION_COOKIE = "cited_session"
+
+
+def _is_https(request: Request) -> bool:
+    return request.url.scheme == "https" or request.headers.get("x-forwarded-proto", "") == "https"
+
+
+def _set_session_cookie(response, request: Request, token: str) -> None:
+    response.set_cookie(SESSION_COOKIE, token, max_age=accounts.SESSION_DAYS * 86400, httponly=True,
+                        samesite="lax", secure=_is_https(request), path="/")
+
+
+def _current_user(request: Request, response=None) -> dict | None:
+    token = request.cookies.get(SESSION_COOKIE)
+    user, renewed = STATE["accounts"].user_for_session(token)
+    if user and renewed and response is not None:
+        _set_session_cookie(response, request, token)  # sliding 180-day window
+    return user
+
+
+def _require_user(request: Request, response=None) -> dict:
+    user = _current_user(request, response)
+    if not user:
+        raise HTTPException(401, "Sign in first.")
+    return user
+
+
+def _public_user(user: dict | None) -> dict | None:
+    if not user:
+        return None
+    acc: accounts.Accounts = STATE["accounts"]
+    return {"email": user["email"], "plan": user["plan"],
+            "emails_this_month": acc.email_allowance(user["email"], user["plan"] == "member")}
+
+
+class CodeRequest(BaseModel):
+    email: str = Field(max_length=254)
+
+
+class VerifyRequest(BaseModel):
+    email: str = Field(max_length=254)
+    code: str = Field(max_length=12)
+    visitor_id: str | None = None
+    session_id: str | None = None
+
+
+def _send_code(email: str, ip: str, attachment: tuple[str, bytes] | None = None, title: str = "") -> tuple[bool, str]:
+    code, why = STATE["accounts"].create_code(email, ip)
+    if not code:
+        return False, why
+    if attachment:
+        subject = f"Your Cited notebook: {title}"[:120]
+        text = (f"Your notebook \"{title}\" is attached as a PDF.\n\n"
+                f"Want your notebooks and chats on every device? Enter this code on Cited within 10 minutes:\n\n"
+                f"    {code}\n\nIf you didn't ask for this, ignore this email.\n\n"
+                f"Cited is built on {config.CREDIT_NAME} ({config.CREDIT_URL}) and is not affiliated with Aakash Gupta.")
+    else:
+        subject = f"Your Cited sign-in code: {code}"
+        text = (f"Your Cited sign-in code is:\n\n    {code}\n\nIt works for 10 minutes. "
+                f"If you didn't ask for it, ignore this email.")
+    ok = mailer.send(email, subject, text, attachments=[attachment] if attachment else None)
+    return (True, "") if ok else (False, "We couldn't send the email. Please try again in a minute.")
+
+
+@app.post("/api/auth/request-code")
+def request_code(req: CodeRequest, request: Request):
+    email = accounts.normalize_email(req.email)
+    if not email:
+        raise HTTPException(400, "That doesn't look like an email address.")
+    ok, why = _send_code(email, _client_ip(request))
+    if not ok:
+        return JSONResponse({"error": why}, status_code=429)
+    return {"sent": True}
+
+
+@app.post("/api/auth/verify")
+def verify_code(req: VerifyRequest, request: Request, response: FastResponse):
+    email = accounts.normalize_email(req.email)
+    acc: accounts.Accounts = STATE["accounts"]
+    if not email or not acc.verify_code(email, req.code):
+        raise HTTPException(400, "That code didn't work. Check the latest email, or ask for a new code.")
+    user, created = acc.get_or_create_user(email)
+    _set_session_cookie(response, request, acc.create_session(user["id"]))
+    STATE["analytics"].log("signup" if created else "signin", req.visitor_id, req.session_id)
+    return {"user": _public_user(user), "created": created}
+
+
+@app.get("/api/auth/me")
+def me(request: Request, response: FastResponse):
+    return {"user": _public_user(_current_user(request, response)), "email_ready": mailer.configured(),
+            "limits": {"turns_per_chat": accounts.FREE_TURNS_PER_CHAT, "chats_per_day": accounts.FREE_CHATS_PER_DAY,
+                       "emails_per_month": accounts.FREE_EMAILED_NOTEBOOKS_PER_MONTH}}
+
+
+@app.post("/api/auth/signout")
+def signout(request: Request, response: FastResponse):
+    STATE["accounts"].end_session(request.cookies.get(SESSION_COOKIE))
+    response.delete_cookie(SESSION_COOKIE, path="/")
+    return {"ok": True}
+
+
+@app.get("/api/me/notebooks")
+def my_notebooks(request: Request, response: FastResponse):
+    user = _require_user(request, response)
+    return {"notebooks": STATE["accounts"].list_notebooks(user["id"])}
+
+
+@app.put("/api/me/notebooks/{nb_id}")
+async def put_notebook(nb_id: str, request: Request, response: FastResponse):
+    user = _require_user(request, response)
+    body = await request.body()
+    if len(body) > accounts.MAX_NOTEBOOK_BYTES:
+        raise HTTPException(413, "This notebook is too large to sync.")
+    nb = json.loads(body or b"{}")
+    if not isinstance(nb, dict) or nb.get("id") != nb_id:
+        raise HTTPException(400, "bad notebook")
+    ok, why = STATE["accounts"].save_notebook(user["id"], nb)
+    if not ok:
+        raise HTTPException(400, why)
+    return {"ok": True}
+
+
+@app.delete("/api/me/notebooks/{nb_id}")
+def delete_notebook(nb_id: str, request: Request, response: FastResponse):
+    user = _require_user(request, response)
+    STATE["accounts"].delete_notebook(user["id"], nb_id)
+    return {"ok": True}
+
+
+class ChatIn(BaseModel):
+    title: str = Field(default="", max_length=200)
+    turns: list[dict] = Field(default_factory=list, max_length=50)
+
+
+@app.get("/api/me/chats")
+def my_chats(request: Request, response: FastResponse):
+    user = _require_user(request, response)
+    return {"chats": STATE["accounts"].list_chats(user["id"])}
+
+
+@app.get("/api/me/chats/{chat_id}")
+def my_chat(chat_id: str, request: Request, response: FastResponse):
+    user = _require_user(request, response)
+    chat = STATE["accounts"].get_chat(user["id"], chat_id)
+    if not chat:
+        raise HTTPException(404, "No such chat.")
+    return chat
+
+
+@app.put("/api/me/chats/{chat_id}")
+def put_chat(chat_id: str, body: ChatIn, request: Request, response: FastResponse):
+    user = _require_user(request, response)
+    if not STATE["accounts"].save_chat(user["id"], chat_id, body.title, body.turns):
+        raise HTTPException(400, "Couldn't save this chat.")
+    return {"ok": True}
+
+
+@app.delete("/api/me/chats/{chat_id}")
+def delete_chat(chat_id: str, request: Request, response: FastResponse):
+    user = _require_user(request, response)
+    STATE["accounts"].delete_chat(user["id"], chat_id)
+    return {"ok": True}
+
+
+class EmailNotebookRequest(BaseModel):
+    email: str | None = Field(default=None, max_length=254)
+    notebook: dict
+    visitor_id: str | None = None
+    session_id: str | None = None
+
+
+@app.post("/api/notebooks/email")
+def email_notebook(req: EmailNotebookRequest, request: Request, response: FastResponse):
+    """Email a notebook as a PDF. For visitors who aren't signed in, the same
+    email carries a sign-in code, so entering it keeps their notebooks for good."""
+    acc: accounts.Accounts = STATE["accounts"]
+    user = _current_user(request, response)
+    email = user["email"] if user else accounts.normalize_email(req.email or "")
+    if not email:
+        raise HTTPException(400, "Enter the email address to send it to.")
+    allow = acc.email_allowance(email, bool(user and user["plan"] == "member"))
+    if not allow["ok"]:
+        return JSONResponse({"error": f"You've emailed {allow['max']} notebooks this month. "
+                                      "You can still download them as PDF or Markdown.", "allowance": allow},
+                            status_code=429)
+    nb = Notebook(**{k: req.notebook.get(k) for k in ("title", "created", "entries") if req.notebook.get(k) is not None})
+    pdf = export.to_pdf(nb.model_dump())
+    name = _filename(nb.title, "pdf")
+    if user:
+        ok = mailer.send(email, f"Your Cited notebook: {nb.title}"[:120],
+                         f"Your notebook \"{nb.title}\" is attached as a PDF.\n\n"
+                         f"Cited is built on {config.CREDIT_NAME} ({config.CREDIT_URL}).",
+                         attachments=[(name, pdf)])
+        why = "" if ok else "We couldn't send the email. Please try again in a minute."
+    else:
+        ok, why = _send_code(email, _client_ip(request), attachment=(name, pdf), title=nb.title)
+    if not ok:
+        return JSONResponse({"error": why}, status_code=429)
+    acc.record_email(email)
+    STATE["analytics"].log("email_notebook", req.visitor_id, req.session_id, kind="member" if user else "anonymous")
+    return {"sent": True, "email": email, "signed_in": bool(user),
+            "allowance": acc.email_allowance(email, bool(user and user["plan"] == "member"))}
 
 
 # ── Admin: check for new content (manual) ────────────────────────────────────
@@ -368,7 +610,27 @@ def admin_page():
 @app.get("/api/admin/metrics")
 def admin_metrics(request: Request, days: int = 30):
     _require_admin(request)
-    return STATE["analytics"].metrics(days=min(max(days, 7), 365))
+    m = STATE["analytics"].metrics(days=min(max(days, 7), 365))
+    m["accounts"] = STATE["accounts"].stats()
+    return m
+
+
+@app.get("/api/admin/users")
+def admin_users(request: Request):
+    _require_admin(request)
+    return {"users": STATE["accounts"].list_users()}
+
+
+class PlanIn(BaseModel):
+    plan: str
+
+
+@app.post("/api/admin/users/{user_id}/plan")
+def admin_set_plan(user_id: str, body: PlanIn, request: Request):
+    _require_admin(request)
+    if not STATE["accounts"].set_plan(user_id, body.plan):
+        raise HTTPException(400, "Unknown user or plan.")
+    return {"ok": True}
 
 
 @app.get("/healthz")

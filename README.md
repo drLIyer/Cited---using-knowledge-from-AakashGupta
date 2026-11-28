@@ -35,9 +35,23 @@ Set `CITED_ADMIN_TOKEN` and open `/admin`. It shows daily, weekly and monthly ac
 
 Tracking is anonymous: a random browser id and a random per-visit session id, no names, emails, IP addresses or cookies. Visitors are browsers, so one person on two devices counts twice. Question text is stored only with `CITED_LOG_QUESTIONS=1` (then mention it in your privacy note), and is erased after 30 days. Events are kept 400 days. Data lives in `data/analytics.sqlite3`; on Railway or Render point `CITED_ANALYTICS_DB` at a persistent volume.
 
-## No sign-in (by design, for the free MVP)
+## Plans: try without signing in, sign in to keep things
 
-Chats aren't kept after the tab closes, and nothing carries over between visits. Notebooks live in the visitor's own browser (about 500 saved items fit) and don't sync across devices; Markdown or PDF export is how people keep them. If browser storage fills up, the app says so instead of failing silently.
+| | Not signed in | Signed in (free) | Member |
+|---|---|---|---|
+| Chat | 5 questions per chat, 5 chats a day; lost when the tab closes | Same limits; chats saved to the account | No limits (hourly abuse limit still applies) |
+| Notebooks | In this browser only | Synced to every device | Synced |
+| Download (PDF / Markdown) | Unlimited | Unlimited | Unlimited |
+| Email a notebook as PDF | 3 a month per address | 3 a month | 30 a month |
+| New episodes and posts added to notebooks | Teaser count only | Teaser count only | Added automatically |
+
+**Sign-in** is email + 6-digit code (no passwords). "Email me this notebook" sends the PDF with a sign-in code in the same email, so entering it creates the account and uploads the browser's notebooks. Sessions last 180 days and renew on use. Codes expire after 10 minutes, allow 5 tries, are rate-limited per address and network, and are stored only as keyed hashes.
+
+**Members** are set in `/admin` for now (no payments yet).
+
+**Email**: set `RESEND_API_KEY` and `CITED_MAIL_FROM` (a sender on a domain verified in Resend). Without them, emails and codes are written to the server log, which is only for local testing.
+
+**Copying** isn't blocked; copied text from answers and sources gets "via Cited" and the source link appended, and copy events are counted on the dashboard.
 
 ## Pre-generated content
 
@@ -64,6 +78,8 @@ python evals/run_evals.py                # retrieval, confidence, links, latency
 | `cited/pregen.py`, `cited/generated.py` | One-time generation and validation |
 | `cited/export.py` | Markdown and PDF export |
 | `cited/analytics.py`, `static/admin.html` | Anonymous usage events and the admin dashboard |
+| `cited/accounts.py`, `cited/mailer.py` | Email + code sign-in, synced notebooks and chats, free-tier limits, email sending |
+| `cited/updates.py` | New episodes and posts matched to notebooks |
 | `main.py`, `static/` | FastAPI app and the web UI (logo from the Cited repo: `static/logo.svg`, `static/logo-mark.svg`) |
 | `index_seed/` | Saved passage vectors (no text) so deploys skip re-embedding |
 
@@ -78,6 +94,12 @@ python evals/run_evals.py                # retrieval, confidence, links, latency
 | `CITED_ADMIN_TOKEN` | (unset) | Turns on `/admin`; the token to open it |
 | `CITED_ANALYTICS_DB` | `./data/analytics.sqlite3` | Where usage events are stored |
 | `CITED_LOG_QUESTIONS` | `0` | `1` stores question text (30 days) to list uncovered questions |
+| `RESEND_API_KEY` / `CITED_MAIL_FROM` | (unset) | Send sign-in codes and notebook emails; unset = log only (testing) |
+| `CITED_SECRET` | random, saved in `data/secret.key` | Key for hashing codes and sessions; set it in production |
+| `CITED_APP_DB` | `./data/cited.sqlite3` | Accounts, synced notebooks and chats: put on a persistent volume |
+| `CITED_FREE_TURNS_PER_CHAT` / `CITED_FREE_CHATS_PER_DAY` | `5` / `5` | Free chat limits |
+| `CITED_FREE_EMAILS_PER_MONTH` | `3` | Free emailed notebooks per month |
+| `CITED_SESSION_DAYS` | `180` | How long sign-in lasts without a visit |
 | `CITED_DATA_DIR` / `CITED_INDEX_DIR` | `./data` / `./index` | Raw sources / built index (both git-ignored) |
 
 PDF export bundles the DejaVu Sans font (free license, see dejavu-fonts.github.io).
