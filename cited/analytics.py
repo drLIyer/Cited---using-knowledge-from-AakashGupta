@@ -25,7 +25,8 @@ from pathlib import Path
 
 from . import config
 
-CLIENT_EVENTS = {"visit", "save", "notebook_created", "export", "related_click", "topic_open"}
+CLIENT_EVENTS = {"visit", "save", "notebook_created", "export", "related_click", "topic_open",
+                 "auto_added", "auto_removed", "auto_toggle"}
 SERVER_EVENTS = {"ask"}
 _ID = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
 _FIELD_LIMITS = {"topic": 40, "kind": 20, "value": 40, "confidence": 10}
@@ -176,6 +177,9 @@ class Analytics:
                 "saves_by_kind": dict(Counter(e["kind"] for e in events if e["type"] == "save")),
                 "exports_by_format": dict(Counter(e["kind"] for e in events if e["type"] == "export")),
                 "related_clicks": sum(1 for e in events if e["type"] == "related_click"),
+                "auto_added": sum(1 for e in events if e["type"] == "auto_added"),
+                "auto_removed": sum(1 for e in events if e["type"] == "auto_removed"),
+                "auto_turned_off": sum(1 for e in events if e["type"] == "auto_toggle" and e["value"] == "off"),
             },
             "topics": {
                 "asked": topic_asks.most_common(),

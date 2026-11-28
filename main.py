@@ -10,6 +10,7 @@ import hmac
 import json
 import logging
 import os
+import threading
 import time
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
@@ -19,7 +20,8 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from cited import analytics, answer, config, export, models, search
+from cited import analytics, answer, config, export, models, search, sources, updates
+from cited import index as index_mod
 from cited.cache import AnswerCache, seed_from_generated
 from cited.index import Index
 from cited.topics import TOPIC_BY_ID, TOPICS
@@ -31,11 +33,15 @@ STATE: dict = {}
 DEFAULT_TOPICS = ["ai-pm-skills", "pricing", "careers"]
 
 
-@asynccontextmanager
-async def lifespan(_app: FastAPI):
+def _load_index() -> tuple[Index, AnswerCache, int]:
     idx = Index.load()
     cache = AnswerCache(config.INDEX_DIR / "answer_cache.json", idx.meta["version"])
-    seeded = seed_from_generated(cache, idx.generated)
+    return idx, cache, seed_from_generated(cache, idx.generated)
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    idx, cache, seeded = _load_index()
     models.embed_queries(["warm up"])
     models.rerank("warm up", ["warm up"])
     stats = analytics.Analytics(analytics.default_path())
@@ -248,6 +254,82 @@ def export_pdf(nb: Notebook):
     pdf = export.to_pdf(nb.model_dump())
     return Response(pdf, media_type="application/pdf",
                     headers={"Content-Disposition": f'attachment; filename="{_filename(nb.title, "pdf")}"'})
+
+
+# ── New content for notebooks ────────────────────────────────────────────────
+
+class NotebookSummary(BaseModel):
+    id: str = Field(max_length=40)
+    since: str = Field(max_length=40)
+    title: str = Field(default="", max_length=120)
+    questions: list[str] = Field(default_factory=list, max_length=20)
+    chunk_ids: list[str] = Field(default_factory=list, max_length=100)
+    doc_ids: list[str] = Field(default_factory=list, max_length=100)
+    topics: list[str] = Field(default_factory=list, max_length=10)
+
+
+class UpdatesRequest(BaseModel):
+    notebooks: list[NotebookSummary] = Field(default_factory=list, max_length=20)
+
+
+@app.post("/api/updates")
+def notebook_updates(req: UpdatesRequest):
+    """New episodes and posts that match each notebook since it was last checked.
+
+    The notebook summaries are used for this request only and never stored."""
+    idx: Index = STATE["index"]
+    nbs = [n.model_dump() for n in req.notebooks]
+    for n in nbs:
+        n["questions"] = [q[:300] for q in n["questions"]]
+    return updates.check(idx, nbs, idx.first_seen)
+
+
+# ── Admin: check for new content (manual) ────────────────────────────────────
+
+REFRESH: dict = {"status": "idle"}
+_refresh_lock = threading.Lock()
+
+
+def _run_refresh() -> None:
+    started = time.time()
+    try:
+        before = set(STATE["index"].docs)
+        repo = sources.ensure_transcripts(config.DATA_DIR / "transcripts")
+        docs = sources.load_episodes(repo)
+        docs += sources.newsletter_docs(sources.fetch_newsletter_posts(refresh=True))
+        meta = index_mod.build(docs)
+        idx, cache, _ = _load_index()
+        STATE.update(index=idx, cache=cache)
+        added = [d for d in idx.docs if d not in before]
+        REFRESH.update(status="done", finished=updates.now_iso(), seconds=round(time.time() - started),
+                       documents=meta["documents"], passages=meta["passages"],
+                       new=[{"id": d, "title": idx.docs[d]["title"], "kind": idx.docs[d]["kind"],
+                             "date": idx.docs[d]["date"]} for d in sorted(added)])
+        log.info("Refresh done: %d new documents", len(added))
+    except Exception as e:  # report the failure in the dashboard instead of crashing the app
+        log.exception("Refresh failed")
+        REFRESH.update(status="failed", finished=updates.now_iso(), error=str(e)[:300])
+    finally:
+        _refresh_lock.release()
+
+
+@app.post("/api/admin/refresh")
+def admin_refresh(request: Request):
+    _require_admin(request)
+    if not _refresh_lock.acquire(blocking=False):
+        return {**REFRESH, "status": "running"}
+    REFRESH.clear()
+    REFRESH.update(status="running", started=updates.now_iso())
+    threading.Thread(target=_run_refresh, daemon=True).start()
+    return REFRESH
+
+
+@app.get("/api/admin/refresh")
+def admin_refresh_status(request: Request):
+    _require_admin(request)
+    idx: Index = STATE["index"]
+    return {**REFRESH, "index_built_at": idx.meta.get("built_at"),
+            "index_documents": idx.meta.get("documents")}
 
 
 # ── Analytics ─────────────────────────────────────────────────────────────────

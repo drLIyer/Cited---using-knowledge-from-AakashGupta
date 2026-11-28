@@ -4,7 +4,7 @@
     {"q": "How should I price a new AI feature?", "cat": "broad", "topic": "pricing"},
     {"q": "When should a SaaS company raise prices?", "cat": "broad", "topic": "pricing", "expect": ["pod:2024-08-19-pricing-masterclass"]},
     {"q": "What makes a good North Star metric?", "cat": "broad", "topic": "metrics"},
-    {"q": "How do I run AI evals as a product manager?", "cat": "broad", "topic": "ai-evals", "expect": ["pod:2026-05-22-aparna-dhinakaran-podcast"]},
+    {"q": "How do I run AI evals as a product manager?", "cat": "broad", "topic": "ai-evals", "expect": ["pod:2026-05-22-aparna-dhinakaran-podcast", "pod:2025-07-11-hamel-shreya-podcast", "pod:2026-01-15-hamel-shreya-podcast-2"]},
     {"q": "How do I land my first PM job?", "cat": "broad", "topic": "careers"},
     {"q": "What is product-led growth and when does it work?", "cat": "broad", "topic": "plg", "expect": ["pod:2024-09-20-plg-masterclass-in-2024", "pod:2024-10-08-everything-you-need-to-know-about-bae"]},
     {"q": "How do you build a product strategy?", "cat": "broad", "topic": "strategy", "expect": ["pod:2025-01-08-product-strategy-masterclass-by-gautham"]},

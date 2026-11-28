@@ -281,7 +281,7 @@
     const startNb = () => {
       const nb = createNotebook(t.name);
       nb.entries.push({
-        kind: "topic", topic_name: t.name, overview: t.overview || t.description, points,
+        kind: "topic", topic_id: t.id, topic_name: t.name, overview: t.overview || t.description, points,
         sources: (t.passages || []).slice(0, 6).map(slimSource), saved_at: new Date().toISOString(),
       });
       persist(); openDrawer(); toast(`Started notebook “${t.name}”`);
@@ -317,7 +317,8 @@
 
   // ── Notebooks ──────────────────────────────────────────────────────────────
   function createNotebook(title) {
-    const nb = { id: uid(), title: title || "My notebook", created: new Date().toISOString(), entries: [] };
+    const now = new Date().toISOString();
+    const nb = { id: uid(), title: title || "My notebook", created: now, lastChecked: now, autoAdd: true, entries: [] };
     notebooks.unshift(nb); activeId = nb.id; persist();
     track("notebook_created");
     return nb;
@@ -360,8 +361,9 @@
     $("#nbCount").textContent = active()?.entries.length ?? 0;
     const list = $("#nbList");
     list.replaceChildren(...notebooks.map((n) => el("li", {},
-      el("button", { class: n.id === activeId ? "active" : "", onclick: () => { activeId = n.id; persist(); openDrawer(); } },
-        el("span", {}, n.title), el("small", {}, String(n.entries.length))))));
+      el("button", { class: n.id === activeId ? "active" : "", onclick: () => { activeId = n.id; n.hasNew = false; persist(); openDrawer(); } },
+        el("span", {}, n.title, n.hasNew ? el("span", { class: "new-dot", title: "New items added" }, " • new") : null),
+        el("small", {}, String(n.entries.length))))));
     if (!notebooks.length) list.append(el("li", { class: "empty-note" }, "Save an answer to start one."));
     if (!$("#drawer").hidden) renderDrawer();
   }
@@ -389,14 +391,63 @@
       const note = el("textarea", { rows: 2, placeholder: "Add your note…" });
       note.value = e.note || "";
       note.addEventListener("change", () => { e.note = note.value; persist(); });
-      return el("div", { class: "entry" },
-        el("div", { class: "entry__kind" }, label),
+      return el("div", { class: "entry" + (e.auto ? " entry--new" : "") },
+        el("div", { class: "entry__kind" }, e.auto ? `New ${e.source?.kind === "podcast" ? "episode" : "post"} · added for you` : label),
+        e.auto && e.matched ? el("div", { class: "entry__why" }, `Matches “${e.matched}”`) : null,
         el("div", { class: "entry__title" }, title || ""),
         el("div", { class: "entry__body" }, (bodyText || "").replace(/\[(\d+)\]/g, "")),
         note,
         el("div", { class: "entry__actions" },
-          el("button", { onclick: () => { nb.entries.splice(i, 1); persist(); renderDrawer(); } }, "Remove")));
+          el("button", { onclick: () => { if (e.auto) track("auto_removed"); nb.entries.splice(i, 1); persist(); renderDrawer(); } }, "Remove")));
     }));
+    const toggle = el("input", { type: "checkbox", id: "autoAdd" });
+    toggle.checked = nb.autoAdd !== false;
+    toggle.addEventListener("change", () => {
+      nb.autoAdd = toggle.checked; persist();
+      track("auto_toggle", { value: toggle.checked ? "on" : "off" });
+    });
+    entries.prepend(el("label", { class: "auto-toggle", for: "autoAdd" }, toggle,
+      " Add new episodes and posts that match this notebook when I come back"));
+  }
+
+  // ── New content for notebooks ──────────────────────────────────────────────
+  function summarize(nb) {
+    const questions = [], chunkIds = [], docIds = [], topics = [];
+    for (const e of nb.entries) {
+      if (e.kind === "answer" && e.question) questions.push(e.question);
+      for (const s of e.sources || (e.source ? [e.source] : [])) {
+        if (s.chunk_id) { chunkIds.push(s.chunk_id); docIds.push(s.chunk_id.split("#")[0]); }
+      }
+      if (e.kind === "topic" && e.topic_id) topics.push(e.topic_id);
+    }
+    const byName = Object.fromEntries((meta?.topics || []).map((t) => [t.name.toLowerCase(), t.id]));
+    if (byName[nb.title.toLowerCase()]) topics.push(byName[nb.title.toLowerCase()]);
+    return { id: nb.id, since: nb.lastChecked || nb.created, title: nb.title,
+      questions: questions.slice(-20), chunk_ids: chunkIds.slice(-100), doc_ids: [...new Set(docIds)].slice(-100), topics: [...new Set(topics)] };
+  }
+
+  async function checkForNew() {
+    const eligible = notebooks.filter((n) => n.autoAdd !== false && n.entries.length);
+    if (!eligible.length) return;
+    let res;
+    try {
+      res = await fetch("/api/updates", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ notebooks: eligible.slice(0, 20).map(summarize) }) }).then((r) => r.json());
+    } catch { return; }
+    let added = 0;
+    for (const nb of eligible) {
+      const items = res.notebooks?.[nb.id] || [];
+      const have = new Set(nb.entries.flatMap((e) => (e.sources || (e.source ? [e.source] : [])).map((s) => (s.chunk_id || "").split("#")[0])));
+      for (const s of items) {
+        if (have.has(s.doc_id)) continue;
+        nb.entries.push({ kind: "quote", source: slimSource(s), auto: true, matched: s.matched, saved_at: new Date().toISOString() });
+        nb.hasNew = true; added++;
+        track("auto_added", { kind: s.kind });
+      }
+      nb.lastChecked = res.checked_at;
+    }
+    persist();
+    if (added) toast(`${added} new ${added === 1 ? "episode or post was" : "episodes and posts were"} added to your notebooks`);
   }
 
   function openDrawer() {
@@ -441,6 +492,7 @@
         ? "Answers come only from the free archive and cite every source. Check a clip before quoting it."
         : "Preview: search-only mode. Answers will appear once answer writing is switched on.";
       renderTopics();
+      checkForNew();
     } catch { $("#modeNote").textContent = "Couldn't reach the server."; }
 
     $("#composer").addEventListener("submit", (e) => { e.preventDefault(); const v = $("#input").value; $("#input").value = ""; autosize(); ask(v); });

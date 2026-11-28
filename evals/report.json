@@ -54,8 +54,8 @@
    "in_scope_marked_low": 0.0,
    "out_of_scope_marked_low": 1.0,
    "links_ok": 1.0,
-   "latency_p50_s": 1.77,
-   "latency_p95_s": 2.0
+   "latency_p50_s": 1.76,
+   "latency_p95_s": 1.97
   },
   "misses": [
    {
@@ -111,8 +111,8 @@
    "q": "How do I run AI evals as a product manager?",
    "cat": "broad",
    "confidence": "high",
-   "top_score": 0.997,
-   "top_doc": "pod:2026-05-22-aparna-dhinakaran-podcast",
+   "top_score": 0.993,
+   "top_doc": "pod:2026-01-15-hamel-shreya-podcast-2",
    "distinct_sources": 5,
    "hit": true,
    "rr": 1.0,

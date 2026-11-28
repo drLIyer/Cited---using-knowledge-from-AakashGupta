@@ -34,6 +34,21 @@ TOPIC_MIN_Z = 1.3
 TOPIC_Z_MARGIN = 0.3
 
 
+# Ad-like passages (course plugs, sponsor reads the transcripts didn't mark,
+# bundle announcements). Ranked lower in search; never auto-added to notebooks.
+_PROMO_STRONG = re.compile(
+    r"(brought to you by|use (my|the) code|promo code|discount code|\b\d{1,2}% off\b|\$\d+ off\b|"
+    r"i(?:'m| am) accepting (a group|applications)|enroll (now|today|at)|sign up (now|today) at|"
+    r"link in the (description|show notes)|annual subscriber|become an annual|subscribe (now|today)|"
+    r"my bundle|aakash'?s bundle|free year of)", re.I)
+_PROMO_WEAK = re.compile(r"(cohort|maven\.com|sponsor|limited spots|apply (now|today)|giveaway|discount|coupon|waitlist)", re.I)
+
+
+def is_promo(text: str) -> bool:
+    strong = len(_PROMO_STRONG.findall(text))
+    return strong >= 2 or (strong >= 1 and strong + len(_PROMO_WEAK.findall(text)) >= 2)
+
+
 def tokenize(text: str) -> list[str]:
     return [t.strip(".'-") for t in _TOKEN.findall(text.lower()) if t not in _STOP and len(t) > 1]
 
@@ -161,6 +176,8 @@ def build(docs: list[dict], out_dir: Path | None = None) -> dict:
     }
 
     (out_dir / "docs.json").write_text(json.dumps([_doc_meta(d) for d in docs]))
+    from . import updates
+    updates.record_first_seen([d["id"] for d in docs], out_dir)
     with (out_dir / "chunks.jsonl").open("w") as f:
         for c in chunks:
             f.write(json.dumps(c) + "\n")
@@ -182,6 +199,7 @@ class Index:
     topic_vecs: np.ndarray | None = field(default=None, repr=False)
     topic_mu: np.ndarray | None = field(default=None, repr=False)
     topic_sd: np.ndarray | None = field(default=None, repr=False)
+    first_seen: dict = field(default_factory=dict, repr=False)
 
     @classmethod
     def load(cls, index_dir: Path | None = None, generated_dir: Path | None = None) -> "Index":
@@ -190,11 +208,15 @@ class Index:
         chunks = [json.loads(line) for line in (index_dir / "chunks.jsonl").open()]
         emb = np.load(index_dir / "embeddings.npy")
         meta = json.loads((index_dir / "meta.json").read_text())
+        for c in chunks:
+            c["promo"] = is_promo(c["text"])
         bm25 = BM25Okapi([tokenize(f"{_doc_header(docs[c['doc_id']])} {c['text']}") for c in chunks])
         idx = cls(docs=docs, chunks=chunks, emb=emb, meta=meta, bm25=bm25,
                   pos={c["id"]: i for i, c in enumerate(chunks)})
         from . import generated
         idx.generated = generated.load(generated_dir or config.GENERATED_DIR, idx)
+        from . import updates
+        idx.first_seen = updates.load_first_seen(index_dir)
         idx.topic_vecs = models.embed_passages([f"{t['name']}. {t['description']}" for t in TOPICS])
         sims = emb @ idx.topic_vecs.T
         idx.topic_mu, idx.topic_sd = sims.mean(axis=0), sims.std(axis=0) + 1e-6

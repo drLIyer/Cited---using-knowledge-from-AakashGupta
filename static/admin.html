@@ -100,6 +100,16 @@ ol.qs { margin: 6px 0 0; padding-left: 20px; font-size: 13px; }
         <button id="signout">Sign out</button>
       </div>
     </header>
+    <div class="card" style="margin-bottom:12px">
+      <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between">
+        <div>
+          <h2>Content updates</h2>
+          <p class="sub" id="refreshInfo" style="margin:0">Checks the transcript repo and the newsletter for new free episodes and posts, then re-indexes.</p>
+        </div>
+        <button id="refreshBtn">Check for updates now</button>
+      </div>
+      <div id="refreshResult" class="note" style="margin-top:8px"></div>
+    </div>
     <div class="grid kpis" id="kpis"></div>
     <div class="grid panels">
       <div class="card wide">
@@ -161,6 +171,7 @@ ol.qs { margin: 6px 0 0; padding-left: 20px; font-size: 13px; }
     const m = await res.json();
     $("#gate").hidden = true; $("#dash").hidden = false;
     render(m);
+    refreshStatus(true);
   }
 
   function kpi(label, value, hint, main) {
@@ -257,6 +268,9 @@ ol.qs { margin: 6px 0 0; padding-left: 20px; font-size: 13px; }
       ["Markdown exports", num(ex.markdown || 0)],
       ["PDF exports", num(ex.pdf || 0)],
       ["Related clicks", num(nb.related_clicks)],
+      ["New items auto-added", num(nb.auto_added)],
+      ["Auto-added, then removed", num(nb.auto_removed)],
+      ["Auto-add turned off", num(nb.auto_turned_off)],
     ].map(([l, v]) => `<div class="stat"><div class="v">${v}</div><div class="l">${esc(l)}</div></div>`).join("");
 
     const asked = m.topics.asked.map(([t, n]) => ({ label: TOPIC_NAMES[t] || t, value: n }));
@@ -276,6 +290,30 @@ ol.qs { margin: 6px 0 0; padding-left: 20px; font-size: 13px; }
       : gaps.length ? `<h2 style="margin-top:12px">Most-asked uncovered questions</h2><ol class="qs">${gaps.map(([q, n]) => `<li>${esc(q)} <span class="note">×${n}</span></li>`).join("")}</ol>` : `<p class="note">No uncovered questions yet.</p>`;
   }
 
+  async function refreshStatus(poll) {
+    const r = await fetch("/api/admin/refresh", { headers: { Authorization: `Bearer ${token}` } });
+    if (!r.ok) return;
+    const st = await r.json();
+    const info = `Index built ${String(st.index_built_at || "").replace("T", " ").slice(0, 16)} UTC · ${num(st.index_documents)} episodes and posts.`;
+    $("#refreshInfo").textContent = info;
+    const btn = $("#refreshBtn"), out = $("#refreshResult");
+    btn.disabled = st.status === "running";
+    btn.textContent = st.status === "running" ? "Checking…" : "Check for updates now";
+    if (st.status === "running") {
+      out.textContent = `Checking since ${String(st.started || "").slice(11, 16)} UTC. Fetching sources and re-indexing; new passages are embedded, the rest are reused.`;
+      if (poll) setTimeout(() => refreshStatus(true), 4000);
+    } else if (st.status === "done") {
+      const items = st.new || [];
+      out.innerHTML = `Last check finished ${esc(String(st.finished).replace("T", " ").slice(0, 16))} UTC in ${st.seconds}s. ` +
+        (items.length ? `<strong>${items.length} new</strong>:<ul style="margin:4px 0 0;padding-left:18px">${items.map((d) =>
+          `<li>${esc(d.title)} <span class="note">· ${d.kind === "podcast" ? "Episode" : "Post"} · ${esc(d.date)}</span></li>`).join("")}</ul>
+          <span class="note">Readers whose notebooks match these get them added on their next visit.</span>`
+          : "Nothing new since the last check.");
+    } else if (st.status === "failed") {
+      out.innerHTML = `<span class="err">Last check failed: ${esc(st.error)}</span>`;
+    }
+  }
+
   async function boot() {
     try {
       const meta = await fetch("/api/meta").then((r) => r.json());
@@ -289,6 +327,11 @@ ol.qs { margin: 6px 0 0; padding-left: 20px; font-size: 13px; }
     load();
   });
   $("#refresh").addEventListener("click", load);
+  $("#refreshBtn").addEventListener("click", async () => {
+    $("#refreshBtn").disabled = true;
+    await fetch("/api/admin/refresh", { method: "POST", headers: { Authorization: `Bearer ${token}` } });
+    refreshStatus(true);
+  });
   $("#days").addEventListener("change", load);
   $("#signout").addEventListener("click", () => { try { sessionStorage.removeItem("cited.admin"); } catch {} token = ""; $("#dash").hidden = true; $("#gate").hidden = false; });
   boot();

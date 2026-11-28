@@ -20,6 +20,7 @@ HIGH = 0.80
 MEDIUM = 0.35
 SUPPORT = 0.50   # a passage "supports" an answer above this
 MORE_MIN = 0.20  # minimum for "More on this topic" suggestions
+PROMO_PENALTY = 4.0  # reranker logits subtracted from ad-like passages when ranking
 
 
 def rrf(ranked_lists: list[list[int]], k: int = 60) -> list[int]:
@@ -90,7 +91,8 @@ def search(idx: Index, query: str, top_k: int | None = None, kind: str | None = 
     pool = _candidates(idx, query, q_vec, allowed)
     texts = [idx.context_text(idx.chunks[i]) for i in pool]
     scores = models.rerank(query, texts)
-    ranked = sorted(zip(pool, scores), key=lambda x: -x[1])
+    # Ad-like passages sink below real content (ranking only; confidence uses the raw score).
+    ranked = sorted(zip(pool, scores), key=lambda x: -(x[1] - (PROMO_PENALTY if idx.chunks[x[0]].get("promo") else 0)))
 
     results, more, per_doc = [], [], Counter()
     for i, s in ranked:
