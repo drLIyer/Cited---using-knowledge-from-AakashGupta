@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hmac
 import json
+from datetime import datetime, timezone
 import logging
 import os
 import threading
@@ -170,29 +171,34 @@ async def ask(req: AskRequest, request: Request, response: FastResponse):
         return JSONResponse({"error": f"You've reached {config.RATE_LIMIT_PER_HOUR} questions this hour. "
                                       "Please come back a little later."}, status_code=429)
     user = _current_user(request, response)
-    member = bool(user and user["plan"] == "member")
     acc: accounts.Accounts = STATE["accounts"]
+    tier = "member" if acc.is_member(user) else ("free" if user else "anon")
     chat = req.chat_id if req.chat_id and accounts.ID_RE.match(req.chat_id) else (req.session_id or "default")
-    # Free tier: questions per chat and chats per day. Signed-in users are counted
-    # by account; others by browser id and, more loosely, by network address.
-    subjects = [f"u:{user['id']}"] if user else [f"v:{req.visitor_id or 'none'}"]
-    allowance = acc.chat_allowance(subjects[0], chat, member)
-    if allowance["ok"] and not user:
-        ip_allow = acc.chat_allowance(f"ip:{_client_ip(request)}", chat, member)
+    # Not signed in: 5 questions per chat, 5 chats a day (by browser id, and loosely by
+    # network address). Signed in: 25 questions a day. Supporters: no limit.
+    subject = f"u:{user['id']}" if user else f"v:{req.visitor_id or 'none'}"
+    allowance = acc.chat_allowance(subject, chat, tier)
+    if allowance["ok"] and tier == "anon":
+        ip_allow = acc.chat_allowance(f"ip:{_client_ip(request)}", chat, "anon")
         if not ip_allow["ok"] and ip_allow.get("reason") == "day_full" and ip_allow["chats_today"] >= allowance["chats_max"] * 4:
             allowance = {**allowance, "ok": False, "reason": "day_full"}
     if not allowance["ok"]:
-        msg = (f"This chat has reached {accounts.FREE_TURNS_PER_CHAT} questions. Start a new chat to keep going."
-               if allowance["reason"] == "chat_full" else
-               f"You've used today's {accounts.FREE_CHATS_PER_DAY} free chats. Come back tomorrow"
-               + ("." if user else ", or sign in to save your chats and notebooks."))
+        msg = {
+            "chat_full": f"This chat has reached {accounts.FREE_TURNS_PER_CHAT} questions. Start a new chat to keep going, "
+                         f"or sign in for up to {accounts.SIGNED_IN_QUESTIONS_PER_DAY} questions a day.",
+            "day_full": f"You've used today's {accounts.FREE_CHATS_PER_DAY} free chats. Sign in for up to "
+                        f"{accounts.SIGNED_IN_QUESTIONS_PER_DAY} questions a day, or come back tomorrow.",
+            "questions_full": f"You've asked {accounts.SIGNED_IN_QUESTIONS_PER_DAY} questions today. Come back tomorrow, "
+                              "or chip in to keep Cited free and get unlimited chats.",
+        }[allowance["reason"]]
         STATE["analytics"].log("limit_hit", req.visitor_id, req.session_id, kind=allowance["reason"])
         return JSONResponse({"error": msg, "limit": allowance}, status_code=429)
-    acc.record_turn(subjects[0], chat)
-    if not user:
+    acc.record_turn(subject, chat)
+    if tier == "anon":
         acc.record_turn(f"ip:{_client_ip(request)}", chat)
-    if not member:
         allowance["turns_used"] += 1
+    elif tier == "free":
+        allowance["questions_today"] += 1
     idx: Index = STATE["index"]
     cache: AnswerCache = STATE["cache"]
     question = req.question.strip()
@@ -264,6 +270,21 @@ class Notebook(BaseModel):
     title: str = "Cited notebook"
     created: str | None = None
     entries: list[dict] = Field(default_factory=list, max_length=export.MAX_ENTRIES)
+    visitor_id: str | None = None
+
+
+def _anon_export_check(request: Request, response, visitor_id: str | None):
+    """Not signed in: downloads and emailed PDFs share ANON_EXPORTS_PER_MONTH.
+    Returns (key to record or None, error response or None)."""
+    if _current_user(request, response):
+        return None, None
+    key = f"v:{visitor_id}" if visitor_id and analytics._clean_id(visitor_id) else f"ip:{_client_ip(request)}"
+    allow = STATE["accounts"].quota(key, accounts.ANON_EXPORTS_PER_MONTH)
+    if not allow["ok"]:
+        return None, JSONResponse({"error": f"You've used this month's {allow['max']} free exports. Sign in (free) for "
+                                            "unlimited downloads and notebooks on every device.",
+                                   "allowance": allow, "signin": True}, status_code=429)
+    return key, None
 
 
 def _filename(title: str, ext: str) -> str:
@@ -272,15 +293,25 @@ def _filename(title: str, ext: str) -> str:
 
 
 @app.post("/api/export/markdown")
-def export_markdown(nb: Notebook):
+def export_markdown(nb: Notebook, request: Request, response: FastResponse):
+    key, err = _anon_export_check(request, response, nb.visitor_id)
+    if err:
+        return err
     md = export.to_markdown(nb.model_dump())
+    if key:
+        STATE["accounts"].record_email(key)
     return Response(md, media_type="text/markdown; charset=utf-8",
                     headers={"Content-Disposition": f'attachment; filename="{_filename(nb.title, "md")}"'})
 
 
 @app.post("/api/export/pdf")
-def export_pdf(nb: Notebook):
+def export_pdf(nb: Notebook, request: Request, response: FastResponse):
+    key, err = _anon_export_check(request, response, nb.visitor_id)
+    if err:
+        return err
     pdf = export.to_pdf(nb.model_dump())
+    if key:
+        STATE["accounts"].record_email(key)
     return Response(pdf, media_type="application/pdf",
                     headers={"Content-Disposition": f'attachment; filename="{_filename(nb.title, "pdf")}"'})
 
@@ -305,18 +336,35 @@ class UpdatesRequest(BaseModel):
 def notebook_updates(req: UpdatesRequest, request: Request, response: FastResponse):
     """New episodes and posts that match each notebook since it was last checked.
 
-    Members get the items (added to their notebooks); everyone else gets only how
-    many matched. The notebook summaries are used for this request only."""
+    Supporters: items are returned to be added to their notebooks.
+    Signed-in free users on their 2nd and 3rd visits: a preview (topics, which
+    notebooks match, and the items to view); adding them is for supporters.
+    Everyone else: nothing. Notebook summaries are used for this request only."""
     idx: Index = STATE["index"]
+    acc: accounts.Accounts = STATE["accounts"]
     user = _current_user(request, response)
+    member = acc.is_member(user)
+    preview = bool(user and not member and acc.teaser_due(user))
+    if not (member or preview):
+        return {"checked_at": updates.now_iso(), "notebooks": {}, "member": False, "preview": False}
     nbs = [n.model_dump() for n in req.notebooks]
     for n in nbs:
         n["questions"] = [q[:300] for q in n["questions"]]
     out = updates.check(idx, nbs, idx.first_seen)
-    out["member"] = bool(user and user["plan"] == "member")
-    if not out["member"]:
-        out["teaser"] = {k: len(v) for k, v in out["notebooks"].items() if v}
-        out["notebooks"] = {}
+    out.update(member=member, preview=preview)
+    if preview:
+        found = [it for items in out["notebooks"].values() for it in items]
+        if not found:
+            return {**out, "preview": False}  # nothing new: don't spend a preview visit
+        acc.record_teaser(user)
+        names = {t["id"]: t["name"] for t in TOPICS}
+        topic_counts: dict[str, int] = defaultdict(int)
+        for it in found:
+            for t in it.get("topics", [])[:1]:
+                topic_counts[names.get(t, t)] += 1
+        out["topics"] = sorted(topic_counts.items(), key=lambda x: -x[1])
+        out["previews_left"] = max(0, accounts.TEASER_VISITS - (user.get("teaser_views", 0) + 1))
+        STATE["analytics"].log("preview_shown", None, None)
     return out
 
 
@@ -353,8 +401,11 @@ def _public_user(user: dict | None) -> dict | None:
     if not user:
         return None
     acc: accounts.Accounts = STATE["accounts"]
-    return {"email": user["email"], "plan": user["plan"],
-            "emails_this_month": acc.email_allowance(user["email"], user["plan"] == "member")}
+    member = acc.is_member(user)
+    until = user.get("member_until")
+    return {"email": user["email"], "plan": "member" if member else "free",
+            "member_until": datetime.fromtimestamp(until, timezone.utc).strftime("%Y-%m-%d") if member and until else None,
+            "emails_this_month": acc.email_allowance(user["email"], member)}
 
 
 class CodeRequest(BaseModel):
@@ -413,7 +464,11 @@ def verify_code(req: VerifyRequest, request: Request, response: FastResponse):
 def me(request: Request, response: FastResponse):
     return {"user": _public_user(_current_user(request, response)), "email_ready": mailer.configured(),
             "limits": {"turns_per_chat": accounts.FREE_TURNS_PER_CHAT, "chats_per_day": accounts.FREE_CHATS_PER_DAY,
-                       "emails_per_month": accounts.FREE_EMAILED_NOTEBOOKS_PER_MONTH}}
+                       "signed_in_questions_per_day": accounts.SIGNED_IN_QUESTIONS_PER_DAY,
+                       "anon_exports_per_month": accounts.ANON_EXPORTS_PER_MONTH,
+                       "emails_per_month": accounts.FREE_EMAILED_NOTEBOOKS_PER_MONTH},
+            "support": {"available": bool(os.getenv("CITED_STRIPE_PAYMENT_LINK")), "min_usd": SUPPORT_MIN_USD,
+                        "days": accounts.MEMBERSHIP_DAYS}}
 
 
 @app.post("/api/auth/signout")
@@ -502,7 +557,10 @@ def email_notebook(req: EmailNotebookRequest, request: Request, response: FastRe
     email = user["email"] if user else accounts.normalize_email(req.email or "")
     if not email:
         raise HTTPException(400, "Enter the email address to send it to.")
-    allow = acc.email_allowance(email, bool(user and user["plan"] == "member"))
+    anon_key, err = _anon_export_check(request, response, req.visitor_id)
+    if err:
+        return err
+    allow = acc.email_allowance(email, acc.is_member(user))
     if not allow["ok"]:
         return JSONResponse({"error": f"You've emailed {allow['max']} notebooks this month. "
                                       "You can still download them as PDF or Markdown.", "allowance": allow},
@@ -521,9 +579,64 @@ def email_notebook(req: EmailNotebookRequest, request: Request, response: FastRe
     if not ok:
         return JSONResponse({"error": why}, status_code=429)
     acc.record_email(email)
+    if anon_key:
+        acc.record_email(anon_key)
     STATE["analytics"].log("email_notebook", req.visitor_id, req.session_id, kind="member" if user else "anonymous")
     return {"sent": True, "email": email, "signed_in": bool(user),
-            "allowance": acc.email_allowance(email, bool(user and user["plan"] == "member"))}
+            "allowance": acc.email_allowance(email, acc.is_member(user))}
+
+
+# ── Support payments (Stripe Payment Link + webhook) ─────────────────────────
+#
+# CITED_STRIPE_PAYMENT_LINK: a Stripe Payment Link set to "customer chooses price"
+#   with a $5 minimum. STRIPE_WEBHOOK_SECRET: signing secret of a webhook endpoint
+#   at /api/stripe/webhook listening for checkout.session.completed.
+# A completed payment gives MEMBERSHIP_DAYS of supporter perks (stacking).
+
+SUPPORT_MIN_USD = int(os.getenv("CITED_SUPPORT_MIN_USD", "5"))
+
+
+@app.get("/api/support/link")
+def support_link(request: Request, response: FastResponse):
+    base = os.getenv("CITED_STRIPE_PAYMENT_LINK", "")
+    if not base:
+        return {"url": None}
+    user = _current_user(request, response)
+    params = {}
+    if user:
+        params = {"client_reference_id": user["id"], "prefilled_email": user["email"]}
+    from urllib.parse import urlencode
+    return {"url": base + ("?" + urlencode(params) if params else "")}
+
+
+def _verify_stripe(payload: bytes, header: str, secret: str, tolerance: int = 300) -> bool:
+    try:
+        parts = dict(p.split("=", 1) for p in header.split(","))
+        ts, sig = int(parts["t"]), parts["v1"]
+    except (KeyError, ValueError):
+        return False
+    if abs(time.time() - ts) > tolerance:
+        return False
+    expected = hmac.new(secret.encode(), f"{ts}.".encode() + payload, "sha256").hexdigest()
+    return hmac.compare_digest(expected, sig)
+
+
+@app.post("/api/stripe/webhook")
+async def stripe_webhook(request: Request):
+    secret = os.getenv("STRIPE_WEBHOOK_SECRET", "")
+    payload = await request.body()
+    if not secret or not _verify_stripe(payload, request.headers.get("stripe-signature", ""), secret):
+        raise HTTPException(400, "bad signature")
+    event = json.loads(payload)
+    if event.get("type") == "checkout.session.completed":
+        obj = event["data"]["object"]
+        if obj.get("payment_status") in ("paid", "no_payment_required"):
+            email = accounts.normalize_email((obj.get("customer_details") or {}).get("email") or obj.get("customer_email") or "")
+            user = STATE["accounts"].record_payment(obj["id"], obj.get("client_reference_id"), email,
+                                                    int(obj.get("amount_total") or 0), obj.get("currency") or "usd")
+            STATE["analytics"].log("payment", None, None, value=str(obj.get("amount_total") or 0))
+            log.info("Payment %s: supporter %s", obj["id"], user["email"] if user else "(already recorded)")
+    return {"received": True}
 
 
 # ── Admin: check for new content (manual) ────────────────────────────────────

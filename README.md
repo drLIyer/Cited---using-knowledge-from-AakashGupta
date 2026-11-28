@@ -37,21 +37,27 @@ Tracking is anonymous: a random browser id and a random per-visit session id, no
 
 ## Plans: try without signing in, sign in to keep things
 
-| | Not signed in | Signed in (free) | Member |
+| | Not signed in | Signed in (free) | Supporter ($5+ for 3 months) |
 |---|---|---|---|
-| Chat | 5 questions per chat, 5 chats a day; lost when the tab closes | Same limits; chats saved to the account | No limits (hourly abuse limit still applies) |
-| Notebooks | In this browser only | Synced to every device | Synced |
-| Download (PDF / Markdown) | Unlimited | Unlimited | Unlimited |
-| Email a notebook as PDF | 3 a month per address | 3 a month | 30 a month |
-| New episodes and posts added to notebooks | Teaser count only | Teaser count only | Added automatically |
+| Chat | 5 chats a day, 3 questions per chat; lost when the tab closes | 25 questions a day; chats saved | Unlimited |
+| Notebooks | In this browser only | On every device | On every device |
+| Downloads (PDF / .md) | 3 exports a month, shared with emailed PDFs | Unlimited | Unlimited |
+| Email a notebook as PDF | Counts toward the 3 | 3 a month | 30 a month |
+| New episodes and posts | Nothing | On the 2nd and 3rd visits: preview what's new (topics, which notebooks match, the items to view); "Add to notebook" asks to chip in | Added to notebooks automatically |
 
 **Sign-in** is email + 6-digit code (no passwords). "Email me this notebook" sends the PDF with a sign-in code in the same email, so entering it creates the account and uploads the browser's notebooks. Sessions last 180 days and renew on use. Codes expire after 10 minutes, allow 5 tries, are rate-limited per address and network, and are stored only as keyed hashes.
 
-**Members** are set in `/admin` for now (no payments yet).
+**Support** ("Keep Cited free"): a one-time payment, no subscription. Set up:
+1. In Stripe, create a Payment Link with "customers choose what to pay", minimum $5, and set it as `CITED_STRIPE_PAYMENT_LINK`.
+2. Add a webhook endpoint at `https://<your-domain>/api/stripe/webhook` for `checkout.session.completed`, and set its signing secret as `STRIPE_WEBHOOK_SECRET`.
+
+Each payment adds 90 days of supporter perks (stacking). Until Stripe is set up, the button says payments open soon, and supporters can be granted 90 days from `/admin`.
 
 **Email**: set `RESEND_API_KEY` and `CITED_MAIL_FROM` (a sender on a domain verified in Resend). Without them, emails and codes are written to the server log, which is only for local testing.
 
 **Copying** isn't blocked; copied text from answers and sources gets "via Cited" and the source link appended, and copy events are counted on the dashboard.
+
+**Limits are speed bumps**: without sign-in they're tracked by an anonymous browser id (plus a looser per-network cap), so clearing the browser resets them.
 
 ## Pre-generated content
 
@@ -97,8 +103,13 @@ python evals/run_evals.py                # retrieval, confidence, links, latency
 | `RESEND_API_KEY` / `CITED_MAIL_FROM` | (unset) | Send sign-in codes and notebook emails; unset = log only (testing) |
 | `CITED_SECRET` | random, saved in `data/secret.key` | Key for hashing codes and sessions; set it in production |
 | `CITED_APP_DB` | `./data/cited.sqlite3` | Accounts, synced notebooks and chats: put on a persistent volume |
-| `CITED_FREE_TURNS_PER_CHAT` / `CITED_FREE_CHATS_PER_DAY` | `5` / `5` | Free chat limits |
-| `CITED_FREE_EMAILS_PER_MONTH` | `3` | Free emailed notebooks per month |
+| `CITED_FREE_TURNS_PER_CHAT` / `CITED_FREE_CHATS_PER_DAY` | `3` / `5` | Not signed in: questions per chat, chats per day |
+| `CITED_SIGNED_IN_QUESTIONS_PER_DAY` | `25` | Signed in (free): questions per day |
+| `CITED_ANON_EXPORTS_PER_MONTH` | `3` | Not signed in: downloads + emailed PDFs per month |
+| `CITED_FREE_EMAILS_PER_MONTH` | `3` | Signed in (free): emailed notebooks per month |
+| `CITED_TEASER_VISITS` | `2` | Visits on which returning free users preview what's new |
+| `CITED_STRIPE_PAYMENT_LINK` / `STRIPE_WEBHOOK_SECRET` | (unset) | Support payments |
+| `CITED_SUPPORT_MIN_USD` / `CITED_MEMBERSHIP_DAYS` | `5` / `90` | Suggested minimum, supporter period |
 | `CITED_SESSION_DAYS` | `180` | How long sign-in lasts without a visit |
 | `CITED_DATA_DIR` / `CITED_INDEX_DIR` | `./data` / `./index` | Raw sources / built index (both git-ignored) |
 

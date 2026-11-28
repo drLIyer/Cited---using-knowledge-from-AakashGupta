@@ -26,8 +26,9 @@ from pathlib import Path
 from . import config
 
 CLIENT_EVENTS = {"visit", "save", "notebook_created", "export", "related_click", "topic_open",
-                 "auto_added", "auto_removed", "auto_toggle", "copy", "signin_prompt"}
-SERVER_EVENTS = {"ask", "signup", "signin", "limit_hit", "email_notebook"}
+                 "auto_added", "auto_removed", "auto_toggle", "copy", "signin_prompt",
+                 "paywall_shown", "support_click"}
+SERVER_EVENTS = {"ask", "signup", "signin", "limit_hit", "email_notebook", "preview_shown", "payment"}
 _ID = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
 _FIELD_LIMITS = {"topic": 40, "kind": 20, "value": 40, "confidence": 10}
 
@@ -58,6 +59,8 @@ class Analytics:
             kind: str | None = None, value: str | None = None, turn: int | None = None,
             confidence: str | None = None, question: str | None = None, now: float | None = None) -> bool:
         visitor, session = _clean_id(visitor), _clean_id(session)
+        if type_ in SERVER_EVENTS:  # server-side events may have no browser ids
+            visitor, session = visitor or "server_event", session or "server_event"
         if type_ not in CLIENT_EVENTS | SERVER_EVENTS or not visitor or not session:
             return False
         fields = {"topic": topic, "kind": kind, "value": value, "confidence": confidence}
@@ -187,6 +190,10 @@ class Analytics:
                 "signups": sum(1 for e in events if e["type"] == "signup"),
                 "signins": sum(1 for e in events if e["type"] == "signin"),
                 "prompts_shown": sum(1 for e in events if e["type"] == "signin_prompt"),
+                "previews_shown": sum(1 for e in events if e["type"] == "preview_shown"),
+                "paywall_shown": sum(1 for e in events if e["type"] == "paywall_shown"),
+                "support_clicks": sum(1 for e in events if e["type"] == "support_click"),
+                "payments": sum(1 for e in events if e["type"] == "payment"),
                 "limit_hits": dict(Counter(e["kind"] for e in events if e["type"] == "limit_hit")),
             },
             "topics": {

@@ -70,16 +70,62 @@ def test_free_chat_limits(tmp_path, monkeypatch):
     a = make(tmp_path, monkeypatch)
     s = "v:visitor_1234"
     for _ in range(accounts.FREE_TURNS_PER_CHAT):
-        assert a.chat_allowance(s, "chat_1", member=False)["ok"]
+        assert a.chat_allowance(s, "chat_1", "anon")["ok"]
         a.record_turn(s, "chat_1")
-    full = a.chat_allowance(s, "chat_1", member=False)
+    full = a.chat_allowance(s, "chat_1", "anon")
     assert not full["ok"] and full["reason"] == "chat_full"
     for i in range(2, accounts.FREE_CHATS_PER_DAY + 1):
-        assert a.chat_allowance(s, f"chat_{i}", member=False)["ok"]
+        assert a.chat_allowance(s, f"chat_{i}", "anon")["ok"]
         a.record_turn(s, f"chat_{i}")
-    day = a.chat_allowance(s, "chat_new", member=False)
+    day = a.chat_allowance(s, "chat_new", "anon")
     assert not day["ok"] and day["reason"] == "day_full"
-    assert a.chat_allowance(s, "chat_new", member=True)["ok"]
+    assert a.chat_allowance(s, "chat_new", "member")["ok"]
+
+
+def test_signed_in_daily_questions(tmp_path, monkeypatch):
+    a = make(tmp_path, monkeypatch)
+    s = "u:user_1234"
+    for i in range(accounts.SIGNED_IN_QUESTIONS_PER_DAY):
+        assert a.chat_allowance(s, "one_long_chat", "free")["ok"]  # no per-chat limit when signed in
+        a.record_turn(s, "one_long_chat")
+    out = a.chat_allowance(s, "another_chat", "free")
+    assert not out["ok"] and out["reason"] == "questions_full"
+
+
+def test_membership_payments_and_teaser(tmp_path, monkeypatch):
+    a = make(tmp_path, monkeypatch)
+    user, _ = a.get_or_create_user("pat@example.com")
+    assert not a.is_member(user)
+    paid = a.record_payment("cs_1", user["id"], "pat@example.com", 500, "usd")
+    assert a.is_member(paid) and paid["member_until"] > time.time() + 89 * 86400
+    assert a.record_payment("cs_1", user["id"], "pat@example.com", 500, "usd") is None  # idempotent
+    again = a.record_payment("cs_2", None, "pat@example.com", 700, "usd")             # found by email; stacks
+    assert again["member_until"] > paid["member_until"] + 89 * 86400
+    stranger = a.record_payment("cs_3", None, "new@example.com", 500, "usd")          # pays before signing in
+    assert stranger["email"] == "new@example.com" and a.is_member(stranger)
+    a._db.execute("UPDATE users SET member_until=? WHERE id=?", (time.time() - 1, user["id"]))
+    expired = a.get_or_create_user("pat@example.com")[0]
+    assert not a.is_member(expired)
+    # Teaser: only from the 2nd visit, on TEASER_VISITS distinct visits.
+    a.set_plan(user["id"], "free")
+    u = a.get_or_create_user("pat@example.com")[0]
+    assert not a.teaser_due(u)                                   # first visit
+    for visit in (2, 3):
+        a._db.execute("UPDATE users SET visits=? WHERE id=?", (visit, user["id"]))
+        u = a.get_or_create_user("pat@example.com")[0]
+        assert a.teaser_due(u)
+        a.record_teaser(u); a.record_teaser(a.get_or_create_user("pat@example.com")[0])  # once per visit
+    a._db.execute("UPDATE users SET visits=4 WHERE id=?", (user["id"],))
+    assert not a.teaser_due(a.get_or_create_user("pat@example.com")[0])
+
+
+def test_monthly_quota_keys(tmp_path, monkeypatch):
+    a = make(tmp_path, monkeypatch)
+    for _ in range(3):
+        assert a.quota("v:visitor_1234", 3)["ok"]
+        a.record_email("v:visitor_1234")
+    assert not a.quota("v:visitor_1234", 3)["ok"]
+    assert a.quota("v:other_visitor", 3)["ok"]
 
 
 def test_email_allowance(tmp_path, monkeypatch):

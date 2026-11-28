@@ -258,3 +258,13 @@ body.drawer-open .composer { right: 360px; }
 @media (max-width: 760px) { #newChatBtn { display: none; } }
 body.drawer-open .topbar__nav { margin-right: 360px; }
 @media (max-width: 1100px) { body.drawer-open .topbar__nav { margin-right: 0; } }
+
+.support-list { margin: 0 0 10px; padding-left: 20px; font-size: 14px; }
+.preview { border: 1px solid var(--gold); background: var(--gold-soft); border-radius: 12px; padding: 10px 12px; display: grid; gap: 8px; }
+.preview h4 { margin: 0; font-size: 13px; color: var(--accent-text); }
+.preview__item { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; font-size: 13px; }
+.preview__item .t { font-weight: 600; }
+.preview__item .m { color: var(--muted); font-size: 12px; }
+.preview__actions { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 4px; }
+.preview__actions a, .preview__actions button { font-size: 12.5px; border: 0; background: none; padding: 0; color: var(--link); cursor: pointer; text-decoration: none; }
+.preview__actions button { font-weight: 600; }

@@ -140,8 +140,8 @@ ol.qs { margin: 6px 0 0; padding-left: 20px; font-size: 13px; }
         <div id="gaps"></div>
       </div>
       <div class="card wide">
-        <h2>Signed-in users</h2>
-        <p class="sub">Who signed in and came back. Make someone a member to give them new-episode updates (until payments exist).</p>
+        <h2>Signed-in users and supporters</h2>
+        <p class="sub">Who signed in and came back. Returning free users preview what's new on their 2nd and 3rd visits; "Add to notebook" asks them to chip in. You can also grant 90 days of supporter perks here.</p>
         <div class="stats" id="acctStats"></div>
         <div style="overflow-x:auto;margin-top:10px"><table id="users"></table></div>
       </div>
@@ -269,6 +269,11 @@ ol.qs { margin: 6px 0 0; padding-left: 20px; font-size: 13px; }
       ["Members", num(a.members)], ["Synced notebooks", num(a.synced_notebooks)], ["Saved chats", num(a.saved_chats)],
       ["Sign-in prompts shown", num(si.prompts_shown)], ["New accounts (range)", num(si.signups)],
       ["Hit free chat limit", num(Object.values(si.limit_hits || {}).reduce((x, y) => x + y, 0))],
+      ["Saw a what's-new preview", num(a.teaser_shown_users)],
+      ["Clicked 'Add' (paywall)", num(si.paywall_shown)],
+      ["Clicked 'Chip in'", num(si.support_clicks)],
+      ["Payments", num(a.payments)],
+      ["Revenue", "$" + ((a.revenue_cents || 0) / 100).toFixed(2)],
     ].map(([l, v]) => `<div class="stat"><div class="v">${v}</div><div class="l">${esc(l)}</div></div>`).join("");
     loadUsers();
     const saves = nb.saves_by_kind || {}, ex = nb.exports_by_format || {};
@@ -311,10 +316,11 @@ ol.qs { margin: 6px 0 0; padding-left: 20px; font-size: 13px; }
     if (!r.ok) return;
     const { users } = await r.json();
     const day = (t) => t ? new Date(t * 1000).toISOString().slice(0, 10) : "–";
-    $("#users").innerHTML = `<thead><tr><th>Email</th><th>Joined</th><th>Last seen</th><th>Visits</th><th>Notebooks</th><th>Chats</th><th>Plan</th></tr></thead><tbody>${
-      users.map((u) => `<tr><td>${esc(u.email)}</td><td>${day(u.created)}</td><td>${day(u.last_seen)}</td><td>${u.visits}</td><td>${u.notebooks}</td><td>${u.chats}</td>
-        <td><button data-uid="${esc(u.id)}" data-plan="${u.plan === "member" ? "free" : "member"}">${u.plan === "member" ? "Member · remove" : "Free · make member"}</button></td></tr>`).join("")
-      || `<tr><td colspan="7" class="note">No accounts yet.</td></tr>`}</tbody>`;
+    $("#users").innerHTML = `<thead><tr><th>Email</th><th>Joined</th><th>Last seen</th><th>Visits</th><th>Notebooks</th><th>Chats</th><th>Previews seen</th><th>Paid</th><th>Plan</th></tr></thead><tbody>${
+      users.map((u) => `<tr><td>${esc(u.email)}</td><td>${day(u.created)}</td><td>${day(u.last_seen)}</td><td>${u.visits}</td><td>${u.notebooks}</td><td>${u.chats}</td><td>${u.teaser_views || 0}</td><td>${u.paid_cents ? "$" + (u.paid_cents / 100).toFixed(2) : "–"}</td>
+        <td>${(() => { const active = u.plan === "member" && (!u.member_until || u.member_until * 1000 > Date.now());
+          return `<button data-uid="${esc(u.id)}" data-plan="${active ? "free" : "member"}">${active ? `Supporter to ${day(u.member_until)} · end` : "Free · grant 90 days"}</button>`; })()}</td></tr>`).join("")
+      || `<tr><td colspan="9" class="note">No accounts yet.</td></tr>`}</tbody>`;
     $("#users").querySelectorAll("button[data-uid]").forEach((b) => b.addEventListener("click", async () => {
       await fetch(`/api/admin/users/${b.dataset.uid}/plan`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ plan: b.dataset.plan }) });
       loadUsers();

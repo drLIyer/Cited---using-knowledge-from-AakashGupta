@@ -60,7 +60,7 @@
           <div class="step"><span>2</span>Explore related topics across episodes and posts</div>
           <div class="step"><span>3</span>Save to a notebook · download as Markdown or PDF</div>
         </div>
-        <p class="hero__note">No sign-up. Chats aren't saved after you leave; notebooks stay in this browser until you download them.</p>
+        <p class="hero__note" id="heroNote">No sign-up. Chats aren't saved after you leave; notebooks stay in this browser until you download them.</p>
         <div class="starters" id="starters">
           <button class="chip">How should I price a new AI feature?</button>
           <button class="chip">What makes a good North Star metric?</button>
@@ -151,7 +151,27 @@
       <p id="accountInfo"></p>
       <menu>
         <button value="signout" class="btn" id="signoutBtn">Sign out</button>
+        <button type="button" class="btn" id="accountSupport">Keep Cited free</button>
         <button value="cancel" class="btn btn--primary">Close</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <dialog class="dialog" id="supportDialog">
+    <form method="dialog">
+      <h3>Keep Cited free</h3>
+      <p id="supportWhy" class="tag"></p>
+      <p>Chip in <strong>$5 or more</strong> to help pay for the servers. For 3 months you get:</p>
+      <ul class="support-list">
+        <li>New episodes and posts added to your notebooks automatically</li>
+        <li>Unlimited chats</li>
+        <li>30 emailed notebooks a month</li>
+      </ul>
+      <p class="tag">One payment, no subscription: nothing renews without asking you.</p>
+      <p class="err-text" id="supportErr"></p>
+      <menu>
+        <button type="button" class="btn" data-close="supportDialog">Not now</button>
+        <button type="button" class="btn btn--primary" id="supportGo">Chip in $5+</button>
       </menu>
     </form>
   </dialog>

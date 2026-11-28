@@ -26,10 +26,19 @@ SESSION_DAYS = int(os.getenv("CITED_SESSION_DAYS", "180"))
 CODES_PER_EMAIL_PER_HOUR = 5
 CODES_PER_IP_PER_HOUR = 20
 
-FREE_TURNS_PER_CHAT = int(os.getenv("CITED_FREE_TURNS_PER_CHAT", "5"))
+# Not signed in: questions per chat and chats per day.
+FREE_TURNS_PER_CHAT = int(os.getenv("CITED_FREE_TURNS_PER_CHAT", "3"))
 FREE_CHATS_PER_DAY = int(os.getenv("CITED_FREE_CHATS_PER_DAY", "5"))
+# Signed in (free): questions per day, no per-chat limit.
+SIGNED_IN_QUESTIONS_PER_DAY = int(os.getenv("CITED_SIGNED_IN_QUESTIONS_PER_DAY", "25"))
+# Not signed in: downloads and emailed PDFs share this monthly pool.
+ANON_EXPORTS_PER_MONTH = int(os.getenv("CITED_ANON_EXPORTS_PER_MONTH", "3"))
+# Emailed notebooks per address per month.
 FREE_EMAILED_NOTEBOOKS_PER_MONTH = int(os.getenv("CITED_FREE_EMAILS_PER_MONTH", "3"))
 MEMBER_EMAILED_NOTEBOOKS_PER_MONTH = int(os.getenv("CITED_MEMBER_EMAILS_PER_MONTH", "30"))
+# Returning signed-in free users preview what's new on this many visits.
+TEASER_VISITS = int(os.getenv("CITED_TEASER_VISITS", "2"))
+MEMBERSHIP_DAYS = int(os.getenv("CITED_MEMBERSHIP_DAYS", "90"))
 
 MAX_NOTEBOOK_BYTES = 1_000_000
 MAX_NOTEBOOKS_PER_USER = 200
@@ -93,7 +102,14 @@ class Accounts:
             PRIMARY KEY (subject, day, chat));
         CREATE TABLE IF NOT EXISTS email_usage (
             email TEXT NOT NULL, month TEXT NOT NULL, count INTEGER NOT NULL, PRIMARY KEY (email, month));
+        CREATE TABLE IF NOT EXISTS payments (
+            id TEXT PRIMARY KEY, user_id TEXT, email TEXT, amount INTEGER, currency TEXT, created REAL NOT NULL);
         """)
+        cols = {r[1] for r in self._db.execute("PRAGMA table_info(users)")}
+        for col, ddl in (("member_until", "REAL"), ("teaser_views", "INTEGER NOT NULL DEFAULT 0"),
+                         ("teaser_visit", "INTEGER NOT NULL DEFAULT 0")):
+            if col not in cols:
+                self._db.execute(f"ALTER TABLE users ADD COLUMN {col} {ddl}")
         self._db.commit()
 
     def _h(self, value: str) -> str:
@@ -191,20 +207,73 @@ class Accounts:
                 self._db.execute("DELETE FROM sessions WHERE token_hash=?", (self._h(token),))
                 self._db.commit()
 
+    @staticmethod
+    def is_member(user: dict | None) -> bool:
+        if not user or user.get("plan") != "member":
+            return False
+        until = user.get("member_until")
+        return until is None or until > time.time()
+
     def set_plan(self, user_id: str, plan: str) -> bool:
+        """Admin: 'member' grants MEMBERSHIP_DAYS from today; 'free' ends it."""
         if plan not in ("free", "member"):
             return False
+        now = time.time()
         with self._lock:
-            cur = self._db.execute(
-                "UPDATE users SET plan=?, member_since=CASE WHEN ?='member' THEN COALESCE(member_since, ?) ELSE NULL END WHERE id=?",
-                (plan, plan, time.time(), user_id))
+            if plan == "member":
+                cur = self._db.execute("UPDATE users SET plan='member', member_since=COALESCE(member_since, ?), "
+                                       "member_until=? WHERE id=?", (now, now + MEMBERSHIP_DAYS * 86400, user_id))
+            else:
+                cur = self._db.execute("UPDATE users SET plan='free', member_until=NULL WHERE id=?", (user_id,))
             self._db.commit()
             return cur.rowcount == 1
+
+    def record_payment(self, payment_id: str, user_id: str | None, email: str | None,
+                       amount: int, currency: str) -> dict | None:
+        """A completed payment: extend membership by MEMBERSHIP_DAYS (stacking on any
+        time left). Idempotent per payment id. Returns the user, or None if unknown."""
+        now = time.time()
+        with self._lock:
+            if self._db.execute("SELECT 1 FROM payments WHERE id=?", (payment_id,)).fetchone():
+                return None
+            row = None
+            if user_id:
+                row = self._db.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+            if row is None and email:
+                row = self._db.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
+            if row is None and email:
+                uid = "u_" + secrets.token_urlsafe(12)
+                self._db.execute("INSERT INTO users (id, email, created, last_seen) VALUES (?,?,?,?)",
+                                 (uid, email, now, now))
+                row = self._db.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
+            self._db.execute("INSERT INTO payments VALUES (?,?,?,?,?,?)",
+                             (payment_id, row["id"] if row else None, email, amount, currency, now))
+            if row is not None:
+                start = max(now, row["member_until"] or 0)
+                self._db.execute("UPDATE users SET plan='member', member_since=COALESCE(member_since, ?), "
+                                 "member_until=? WHERE id=?", (now, start + MEMBERSHIP_DAYS * 86400, row["id"]))
+            self._db.commit()
+            return dict(self._db.execute("SELECT * FROM users WHERE id=?", (row["id"],)).fetchone()) if row else None
+
+    def teaser_due(self, user: dict) -> bool:
+        """A returning (2nd+ visit) free user who hasn't used up their preview visits."""
+        return (not self.is_member(user) and user.get("visits", 1) >= 2
+                and (user.get("teaser_views", 0) < TEASER_VISITS or user.get("teaser_visit") == user.get("visits")))
+
+    def record_teaser(self, user: dict) -> None:
+        """Count one preview per visit."""
+        if user.get("teaser_visit") == user.get("visits"):
+            return
+        with self._lock:
+            self._db.execute("UPDATE users SET teaser_views = teaser_views + 1, teaser_visit = ? WHERE id=?",
+                             (user.get("visits"), user["id"]))
+            self._db.commit()
 
     def list_users(self, limit: int = 500) -> list[dict]:
         with self._lock:
             rows = self._db.execute("""
-                SELECT u.id, u.email, u.created, u.last_seen, u.visits, u.plan, u.member_since,
+                SELECT u.id, u.email, u.created, u.last_seen, u.visits, u.plan, u.member_since, u.member_until,
+                       u.teaser_views, (SELECT COALESCE(SUM(amount), 0) FROM payments p WHERE p.user_id=u.id) AS paid_cents,
                        (SELECT COUNT(*) FROM notebooks n WHERE n.user_id=u.id) AS notebooks,
                        (SELECT COUNT(*) FROM chats c WHERE c.user_id=u.id) AS chats
                 FROM users u ORDER BY u.last_seen DESC LIMIT ?""", (limit,)).fetchall()
@@ -216,7 +285,10 @@ class Accounts:
             q = lambda sql, *a: self._db.execute(sql, a).fetchone()[0]  # noqa: E731
             return {
                 "users": q("SELECT COUNT(*) FROM users"),
-                "members": q("SELECT COUNT(*) FROM users WHERE plan='member'"),
+                "members": q("SELECT COUNT(*) FROM users WHERE plan='member' AND (member_until IS NULL OR member_until>?)", now),
+                "payments": q("SELECT COUNT(*) FROM payments"),
+                "revenue_cents": q("SELECT COALESCE(SUM(amount), 0) FROM payments"),
+                "teaser_shown_users": q("SELECT COUNT(*) FROM users WHERE teaser_views>0"),
                 "new_last_7_days": q("SELECT COUNT(*) FROM users WHERE created>?", now - 7 * 86400),
                 "active_last_7_days": q("SELECT COUNT(*) FROM users WHERE last_seen>?", now - 7 * 86400),
                 "returning": q("SELECT COUNT(*) FROM users WHERE visits>=2"),
@@ -293,18 +365,28 @@ class Accounts:
 
     # ── Free-tier limits ─────────────────────────────────────────────────────
 
-    def chat_allowance(self, subject: str, chat: str, member: bool) -> dict:
-        """Can this subject ask in this chat now? Doesn't record anything."""
-        if member:
+    def chat_allowance(self, subject: str, chat: str, tier: str) -> dict:
+        """Can this subject ask in this chat now? Doesn't record anything.
+
+        tier: "anon" (5 per chat, 5 chats a day), "free" (25 questions a day), "member" (no limit).
+        """
+        if tier == "member":
             return {"ok": True, "member": True}
         day = _today()
         with self._lock:
             rows = self._db.execute("SELECT chat, turns FROM chat_usage WHERE subject=? AND day=?",
                                     (subject, day)).fetchall()
         used = {r["chat"]: r["turns"] for r in rows}
+        if tier == "free":
+            total = sum(used.values())
+            out = {"ok": total < SIGNED_IN_QUESTIONS_PER_DAY, "tier": "free",
+                   "questions_today": total, "questions_max": SIGNED_IN_QUESTIONS_PER_DAY}
+            if not out["ok"]:
+                out["reason"] = "questions_full"
+            return out
         turns = used.get(chat, 0)
         chats_today = len(used) + (0 if chat in used else 1)
-        out = {"ok": True, "turns_used": turns, "turns_max": FREE_TURNS_PER_CHAT,
+        out = {"ok": True, "tier": "anon", "turns_used": turns, "turns_max": FREE_TURNS_PER_CHAT,
                "chats_today": min(chats_today, FREE_CHATS_PER_DAY), "chats_max": FREE_CHATS_PER_DAY}
         if turns >= FREE_TURNS_PER_CHAT:
             out.update(ok=False, reason="chat_full")
@@ -319,6 +401,14 @@ class Accounts:
             self._db.execute("DELETE FROM chat_usage WHERE day < ?", (
                 datetime.fromtimestamp(time.time() - 7 * 86400, timezone.utc).strftime("%Y-%m-%d"),))
             self._db.commit()
+
+    def quota(self, key: str, cap: int) -> dict:
+        """Monthly counter for any key (an email address, or 'v:<visitor>' for exports)."""
+        with self._lock:
+            row = self._db.execute("SELECT count FROM email_usage WHERE email=? AND month=?",
+                                   (key, _month())).fetchone()
+        used = row["count"] if row else 0
+        return {"ok": used < cap, "used": used, "max": cap}
 
     def email_allowance(self, email: str, member: bool) -> dict:
         cap = MEMBER_EMAILED_NOTEBOOKS_PER_MONTH if member else FREE_EMAILED_NOTEBOOKS_PER_MONTH

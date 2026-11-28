@@ -39,6 +39,7 @@
   let meta = null;
   let busy = false;
   let me = null;               // signed-in user, or null
+  let previews = {};           // notebook id -> new items to view (free preview)
   let chatId = rid();          // one conversation; "New chat" starts another
   let chatTurns = [];          // this chat's turns (saved to the account when signed in)
   const synced = {};           // notebook id -> JSON last sent to the server
@@ -162,6 +163,7 @@
         const actions = el("div", { class: "limit-actions" });
         if (err.limit?.reason === "chat_full") actions.append(el("button", { class: "btn btn--primary", onclick: () => { newChat(); $("#input").value = question; $("#input").focus(); } }, "Start a new chat"));
         if (err.limit && !me) actions.append(el("button", { class: "btn", onclick: () => openSignin() }, "Sign in"));
+        if (err.limit?.reason === "questions_full") actions.append(el("button", { class: "btn", onclick: () => openSupport("You've reached today's free questions.") }, "Keep Cited free"));
         card.replaceChildren(el("div", { class: "notice notice--warn" }, err.error || "Something went wrong. Please try again.", actions.children.length ? actions : null));
         return;
       }
@@ -424,9 +426,17 @@
     });
     entries.prepend(el("label", { class: "auto-toggle", for: "autoAdd" }, toggle,
       me?.plan === "member" ? " Add new episodes and posts that match this notebook when I come back"
-        : " Add matching new episodes and posts (members)"));
-    if (nb.teaser && me?.plan !== "member") {
-      entries.prepend(el("div", { class: "teaser" }, `${nb.teaser} new ${nb.teaser === 1 ? "episode or post matches" : "episodes and posts match"} this notebook. Members get them added automatically.`));
+        : " Add matching new episodes and posts automatically (supporters)"));
+    const pv = previews[nb.id] || [];
+    if (pv.length && me?.plan !== "member") {
+      entries.prepend(el("div", { class: "preview" },
+        el("h4", {}, `New since your last visit · ${pv.length} match${pv.length === 1 ? "es" : ""} this notebook`),
+        ...pv.map((s) => el("div", { class: "preview__item" },
+          el("div", { class: "t" }, s.title),
+          el("div", { class: "m" }, `${s.kind === "podcast" ? "New episode" : "New post"} · ${s.date}${s.matched ? ` · matches “${s.matched}”` : ""}`),
+          el("div", { class: "preview__actions" },
+            el("a", { href: s.url, target: "_blank", rel: "noopener" }, s.kind === "podcast" ? "▶ Watch" : "Read →"),
+            el("button", { onclick: () => { track("paywall_shown"); openSupport(`“${s.title}” matches your notebook.`); } }, "＋ Add to notebook"))))));
     }
   }
 
@@ -455,13 +465,20 @@
         body: JSON.stringify({ notebooks: eligible.slice(0, 20).map(summarize) }) }).then((r) => r.json());
     } catch { return; }
     let added = 0;
-    if (!res.member) {
-      const total = Object.values(res.teaser || {}).reduce((a, b) => a + b, 0);
-      for (const nb of eligible) { nb.teaser = res.teaser?.[nb.id] || 0; }
-      persist();
-      if (total) toast(`${total} new ${total === 1 ? "episode or post matches" : "episodes and posts match"} your notebooks. Members get them added automatically.`);
+    if (res.preview) {
+      // Returning signed-in free user: view what's new, adding is for supporters.
+      previews = {};
+      let nbWith = 0;
+      for (const nb of eligible) {
+        const items = res.notebooks?.[nb.id] || [];
+        if (items.length) { previews[nb.id] = items; nb.hasNew = true; nbWith++; }
+      }
+      renderNotebooks();
+      const topics = (res.topics || []).map(([t, n]) => `${t} (${n})`).join(", ");
+      if (nbWith) toast(`New since your last visit${topics ? ` in ${topics}` : ""}. ${nbWith} of your notebooks ${nbWith === 1 ? "has" : "have"} updates: open ${nbWith === 1 ? "it" : "one"} to see them.`);
       return;
     }
+    if (!res.member) return;
     for (const nb of eligible) {
       nb.teaser = 0;
       const items = res.notebooks?.[nb.id] || [];
@@ -489,8 +506,14 @@
     toast(kind === "pdf" ? "Preparing PDF…" : "Preparing Markdown…");
     const res = await fetch(`/api/export/${kind}`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title: nb.title, created: nb.created, entries: nb.entries }),
+      body: JSON.stringify({ title: nb.title, created: nb.created, entries: nb.entries, visitor_id: visitorId }),
     });
+    if (res.status === 429) {
+      const e = await res.json().catch(() => ({}));
+      toast(e.error || "You've used this month's free exports.");
+      if (e.signin && !me) setTimeout(openSignin, 1200);
+      return;
+    }
     if (!res.ok) return toast("Export failed. Please try again.");
     const blob = await res.blob();
     const name = (res.headers.get("Content-Disposition") || "").match(/filename="([^"]+)"/)?.[1] || `cited.${kind === "pdf" ? "pdf" : "md"}`;
@@ -502,7 +525,8 @@
   // ── Chats ──────────────────────────────────────────────────────────────────
   function renderUsage(a) {
     const u = $("#usage");
-    if (!a || a.member) { u.textContent = a?.member ? "Member: unlimited chats" : ""; return; }
+    if (!a || a.member) { u.textContent = a?.member ? "Supporter: unlimited chats" : ""; return; }
+    if (a.tier === "free") { u.textContent = `Question ${a.questions_today} of ${a.questions_max} today`; return; }
     u.textContent = `Question ${a.turns_used} of ${a.turns_max} in this chat · chat ${a.chats_today} of ${a.chats_max} today`;
   }
 
@@ -602,6 +626,10 @@
   }
 
   function renderAccount() {
+    $("#heroNote").textContent = me
+      ? (me.plan === "member" ? "You're a supporter: unlimited chats, and new episodes are added to your notebooks."
+        : "Signed in: your chats and notebooks are saved to your account, on every device.")
+      : "No sign-up. Chats aren't saved after you leave; notebooks stay in this browser until you download them.";
     $("#accountBtn").textContent = me ? (me.email.length > 22 ? me.email.slice(0, 20) + "…" : me.email) : "Sign in";
     $("#drawerHint").replaceChildren(...(me
       ? [el("strong", {}, "Synced to your account. "), `Your notebooks are saved for ${me.email} and appear on any device where you sign in.`]
@@ -666,7 +694,7 @@
     const left = me ? me.emails_this_month : null;
     $("#emailLede").textContent = me
       ? `We'll email “${nb.title}” as a PDF to ${me.email}.` + (left ? ` ${left.max - left.used} of ${left.max} left this month.` : "")
-      : `We'll email “${nb.title}” as a PDF. Free: 3 a month. Downloading is always free.`;
+      : `We'll email “${nb.title}” as a PDF. Without signing in you get 3 exports a month (downloads and emails together). Signed in, downloads are unlimited.`;
     $("#emailDialog").showModal();
   }
 
@@ -683,10 +711,28 @@
       }
       const nb = active();
       const res = await api("/api/notebooks/email", { email, notebook: { title: nb.title, created: nb.created, entries: nb.entries }, visitor_id: visitorId, session_id: sessionId });
+      if (res.error) throw new Error(res.error);
       if (me) { me.emails_this_month = res.allowance; $("#emailDialog").close(); toast(`Sent to ${res.email}.`); return; }
       $("#emailField").hidden = true; $("#emailCodeStep").hidden = false;
       $("#emailNext").textContent = "Done"; $("#emailCode").focus();
     } catch (err) { $("#emailErr").textContent = err.message; }
+  }
+
+  // ── Support ("keep Cited free") ────────────────────────────────────────────
+  function openSupport(why) {
+    $("#supportWhy").textContent = why || "";
+    $("#supportErr").textContent = "";
+    $("#supportDialog").showModal();
+  }
+
+  async function supportGo() {
+    track("support_click");
+    if (!me) { $("#supportDialog").close(); toast("Sign in first, so your support is linked to your account."); return openSignin(); }
+    const res = await fetch("/api/support/link").then((r) => r.json()).catch(() => ({}));
+    if (!res.url) { $("#supportErr").textContent = "Payments open soon. Thank you for wanting to help!"; return; }
+    window.open(res.url, "_blank", "noopener");
+    $("#supportDialog").close();
+    toast("Thank you! Supporter perks switch on as soon as the payment goes through.");
   }
 
   // ── Copying: keep the credit attached ──────────────────────────────────────
@@ -730,12 +776,16 @@
     $("#accountBtn").addEventListener("click", () => {
       if (!me) return openSignin();
       const left = me.emails_this_month;
-      $("#accountInfo").textContent = `Signed in as ${me.email} · ${me.plan === "member" ? "Member" : "Free plan"}` +
+      $("#accountInfo").textContent = `Signed in as ${me.email} · ` +
+        (me.plan === "member" ? `Supporter until ${me.member_until || "–"}` : "Free plan") +
         (left ? ` · ${left.max - left.used} of ${left.max} notebook emails left this month` : "");
+      $("#accountSupport").hidden = me.plan === "member";
       $("#accountDialog").showModal();
     });
     $("#accountDialog").addEventListener("close", () => { if ($("#accountDialog").returnValue === "signout") signout(); });
     $("#promptSignin").addEventListener("click", () => { $("#promptCard").hidden = true; openSignin(); });
+    $("#supportGo").addEventListener("click", supportGo);
+    $("#accountSupport").addEventListener("click", () => { $("#accountDialog").close(); openSupport(""); });
     $("#promptLater").addEventListener("click", () => { $("#promptCard").hidden = true; store.set("cited.promptSnooze", Date.now() + 7 * 86400 * 1000); });
     try {
       meta = await fetch("/api/meta").then((r) => r.json());
